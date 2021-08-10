@@ -1,0 +1,14 @@
+[package]
+name = "todo"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4.14"
+simplelog = "^0.10.0"
+clap = "2.33.3"
+walkdir = "2.3.2"
+toml = "0.5.8"
+serde = { version = "1.0.127", features = ["derive"] }
