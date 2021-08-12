@@ -1,5 +1,6 @@
-use clap::{App, Arg, SubCommand};
+use clap::{App, AppSettings, Arg, SubCommand};
 use log::{debug, trace, warn};
+use regex::Regex;
 use serde::Deserialize;
 use simplelog::*;
 use std::fmt;
@@ -33,7 +34,20 @@ impl fmt::Display for Configuration {
 
 #[derive(Deserialize, Debug)]
 struct ConfigurationVec {
-    configs: Vec<Configuration>,
+    config: Vec<Configuration>,
+}
+
+impl fmt::Display for ConfigurationVec {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for config in self.config.iter() {
+            writeln!(
+                f,
+                "==={} context===\nide\t\t: {}\ntimezone\t: {}\nfolder\t\t: {}",
+                config.name, config.ide, config.timezone, config.todo_folder
+            )?;
+        }
+        Ok(())
+    }
 }
 
 fn main() -> Result<(), std::io::Error> {
@@ -84,6 +98,8 @@ fn main() -> Result<(), std::io::Error> {
         )
         .subcommand(
             SubCommand::with_name("config")
+                .about("Manage your todo configuration")
+                .setting(AppSettings::SubcommandRequired)
                 .subcommand(
                     SubCommand::with_name("create-context")
                         .about("create a new todo context")
@@ -137,7 +153,14 @@ fn main() -> Result<(), std::io::Error> {
                 .subcommand(
                     SubCommand::with_name("set-context")
                         .about("switch todo context")
-                        .help("switch todo context"), // TODO implement
+                        .help("switch todo context")
+                        .arg(
+                            Arg::with_name("new context")
+                                .takes_value(true)
+                                .required(true)
+                                .help("new context")
+                                .index(1),
+                        ),
                 ),
         )
         .subcommand(SubCommand::with_name("list"))
@@ -192,20 +215,7 @@ fn main() -> Result<(), std::io::Error> {
                         .to_string(),
                 };
 
-                trace!("Opening configuration file");
-                debug!("todo_configuration_path: {}", todo_configuration_path);
-                let mut file = std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create(true)
-                    .open(todo_configuration_path)?;
-
-                let mut old_content = String::new();
-                file.read_to_string(&mut old_content)?;
-                debug!("old_content: {}", old_content);
-                let (_, old_configs) = old_content.split_once("\n").unwrap_or(("", ""));
-                debug!("old_configs: {}", old_configs);
-
+                let (_, old_configs) = config_file_content(todo_configuration_path)?;
                 let mut file = std::fs::OpenOptions::new()
                     .write(true)
                     .truncate(true)
@@ -229,20 +239,65 @@ fn main() -> Result<(), std::io::Error> {
             }
             ("current-context", Some(_)) => {
                 trace!("current-context");
-                // TODO implement
+                let (current_config, _) = config_file_content(todo_configuration_path)?;
+                debug!("current_config = {}", current_config);
+                let current_config_name = Regex::new(r#""(.*)""#)
+                    .unwrap()
+                    .find(current_config.as_str());
+                match current_config_name {
+                    Some(m) => {
+                        trace!("match found");
+                        let mut name = String::from(m.as_str());
+                        name.remove(0);
+                        name.pop();
+                        debug!("name = {}", name);
+                        if name.is_empty() {
+                            warn!("Context is not set");
+                            eprintln!("Context is not set");
+                            std::process::exit(1)
+                        } else {
+                            println!("{}", name);
+                            return Ok(());
+                        }
+                    }
+                    None => {
+                        warn!("No match was found. Bad configuration file");
+                        eprintln!("Bad configuration file: could not parse current configuration");
+                        std::process::exit(1)
+                    }
+                };
             }
             ("get-contexts", Some(_)) => {
                 trace!("get-contexts");
-                // TODO implement
+                let (_, configs_raw) = config_file_content(todo_configuration_path)?;
+                trace!("parsing toml table");
+                let configs: ConfigurationVec = toml::from_str(configs_raw.as_str())?;
+                debug!("parsed toml = {:?}", configs);
+                println!("{}", configs);
+                return Ok(());
             }
             ("set-context", Some(set_context_matches)) => {
                 trace!("set-context");
                 debug!("set_context_matches: {:?}", set_context_matches);
-                // TODO implement
-            }
-            ("", None) => {
-                trace!("no subcommands");
-                // TODO print help
+                let new_context = set_context_matches
+                    .value_of("new context")
+                    .unwrap()
+                    .to_string();
+                let (_, configs) = config_file_content(todo_configuration_path)?;
+
+                trace!("Opening configuration file with write access...");
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .create(true)
+                    .open(todo_configuration_path)?;
+                trace!("Writting to file");
+                File::write(
+                    &mut file,
+                    format!("current_config = \"{}\"\n{}", new_context, configs).as_bytes(),
+                )?;
+
+                println!("Context was set to \"{}\"", new_context);
                 return Ok(());
             }
             _ => unreachable!(),
@@ -264,7 +319,7 @@ fn main() -> Result<(), std::io::Error> {
     let cv: ConfigurationVec = toml::from_str(configs_raw).unwrap();
     debug!("{:?}", cv);
     let c = cv
-        .configs
+        .config
         .iter()
         .find(|&c| c.name == current_config.name)
         .expect("Bad configuration file: no current config name found");
@@ -348,4 +403,23 @@ fn main() -> Result<(), std::io::Error> {
 /// joins todo folder path and todo title into a filepath. The file is in markdown format.
 fn todo_path(todo_folder: &str, todo_title: &str) -> String {
     format!("{}/{}.md", todo_folder, todo_title)
+}
+
+/// Opens configuration file, returns current configuration and configurations
+fn config_file_content(todo_configuration_path: &str) -> Result<(String, String), std::io::Error> {
+    trace!("Opening configuration file");
+    debug!("todo_configuration_path: {}", todo_configuration_path);
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(todo_configuration_path)?;
+
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    debug!("content: {}", content);
+    let (current_config_name, configs) = &content.split_once("\n").unwrap_or(("", ""));
+    debug!("current_config_name: {}", current_config_name);
+    debug!("configs: {}", configs);
+    Ok((current_config_name.to_string(), configs.to_string()))
 }

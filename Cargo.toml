@@ -12,3 +12,4 @@ clap = "2.33.3"
 walkdir = "2.3.2"
 toml = "0.5.8"
 serde = { version = "1.0.127", features = ["derive"] }
+regex = "1.5.4"
