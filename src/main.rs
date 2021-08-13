@@ -1,4 +1,5 @@
 use clap::{App, AppSettings, Arg, SubCommand};
+use dialoguer::Confirm;
 use log::{debug, trace, warn};
 use regex::Regex;
 use serde::Deserialize;
@@ -11,10 +12,10 @@ use walkdir::WalkDir;
 
 #[derive(Deserialize, Debug)]
 struct CurrentConfig {
-    name: String,
+    current_config: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Clone, Deserialize, Debug)]
 struct Configuration {
     ide: String,
     name: String,
@@ -75,7 +76,7 @@ fn main() -> Result<(), std::io::Error> {
                         .long("label")
                         .value_name("LABEL")
                         .help("Filter by label")
-                        // TODO use https://docs.rs/clap/2.33.3/clap/struct.Arg.html#method.value_delimiter
+                        .value_delimiter(",")
                         .takes_value(true),
                 )
                 .arg(
@@ -143,12 +144,12 @@ fn main() -> Result<(), std::io::Error> {
                 .subcommand(
                     SubCommand::with_name("current-context")
                         .about("shows current todo context")
-                        .help("shows current todo context"), // TODO implement
+                        .help("shows current todo context"),
                 )
                 .subcommand(
                     SubCommand::with_name("get-contexts")
                         .about("get all available todo contexts")
-                        .help("get all available todo contexts"), // TODO implement
+                        .help("get all available todo contexts"),
                 )
                 .subcommand(
                     SubCommand::with_name("set-context")
@@ -163,7 +164,17 @@ fn main() -> Result<(), std::io::Error> {
                         ),
                 ),
         )
-        .subcommand(SubCommand::with_name("list"))
+        .subcommand(
+            SubCommand::with_name("list").arg(
+                Arg::with_name("label")
+                    .short("l")
+                    .long("label")
+                    .value_name("LABEL")
+                    .help("Filter by label")
+                    .value_delimiter(",")
+                    .takes_value(true),
+            ),
+        )
         .subcommand(
             SubCommand::with_name("edit").arg(
                 Arg::with_name("title")
@@ -215,7 +226,7 @@ fn main() -> Result<(), std::io::Error> {
                         .to_string(),
                 };
 
-                let (_, old_configs) = config_file_content(todo_configuration_path)?;
+                let (_, old_configs) = config_file_raw(todo_configuration_path)?;
                 let mut file = std::fs::OpenOptions::new()
                     .write(true)
                     .truncate(true)
@@ -239,7 +250,7 @@ fn main() -> Result<(), std::io::Error> {
             }
             ("current-context", Some(_)) => {
                 trace!("current-context");
-                let (current_config, _) = config_file_content(todo_configuration_path)?;
+                let (current_config, _) = config_file_raw(todo_configuration_path)?;
                 debug!("current_config = {}", current_config);
                 let current_config_name = Regex::new(r#""(.*)""#)
                     .unwrap()
@@ -269,7 +280,7 @@ fn main() -> Result<(), std::io::Error> {
             }
             ("get-contexts", Some(_)) => {
                 trace!("get-contexts");
-                let (_, configs_raw) = config_file_content(todo_configuration_path)?;
+                let (_, configs_raw) = config_file_raw(todo_configuration_path)?;
                 trace!("parsing toml table");
                 let configs: ConfigurationVec = toml::from_str(configs_raw.as_str())?;
                 debug!("parsed toml = {:?}", configs);
@@ -283,7 +294,7 @@ fn main() -> Result<(), std::io::Error> {
                     .value_of("new context")
                     .unwrap()
                     .to_string();
-                let (_, configs) = config_file_content(todo_configuration_path)?;
+                let (_, configs) = config_file_raw(todo_configuration_path)?;
 
                 trace!("Opening configuration file with write access...");
                 let mut file = std::fs::OpenOptions::new()
@@ -305,27 +316,22 @@ fn main() -> Result<(), std::io::Error> {
         _ => {}
     }
 
-    let raw = match read_to_string(todo_configuration_path) {
+    trace!("Checking configuration file presence");
+    let _ = match read_to_string(todo_configuration_path) {
         Ok(r) => r,
         Err(e) => {
             // Nice error message because forgetting configuration will happen (panic! macro is
             // ugly)
-            eprintln!("Missing configuration file or unable to open \"{}\", did you initialize it with `todo config`?\nError: {}", todo_configuration_path, e);
+            eprintln!(
+                "Missing configuration file or unable to open \"{}\", 
+did you initialize it with `todo config`?\nError: {}",
+                todo_configuration_path, e
+            );
             std::process::exit(1)
         }
     };
-    let (current_config_name_raw, configs_raw) = raw.split_once('\n').unwrap();
-    let current_config: CurrentConfig = toml::from_str(current_config_name_raw)?;
-    let cv: ConfigurationVec = toml::from_str(configs_raw).unwrap();
-    debug!("{:?}", cv);
-    let c = cv
-        .config
-        .iter()
-        .find(|&c| c.name == current_config.name)
-        .expect("Bad configuration file: no current config name found");
 
-    println!("Nothing was saved in {}", c.todo_folder); // TODO place somewhere after saving file
-    println!("... ({})", c.timezone); // TODO place somewhere after saving todo with deadline
+    let (current_config, configs) = parse_config_file(todo_configuration_path)?;
 
     match matches.subcommand() {
         ("create", Some(create_matches)) => {
@@ -335,43 +341,59 @@ fn main() -> Result<(), std::io::Error> {
             let content = create_matches.value_of("content").unwrap_or("");
             let label = create_matches.value_of("label").unwrap_or("");
 
-            // TODO change panic! to ?
-            let mut file = match File::create(todo_path(c.todo_folder.as_str(), title)) {
-                Err(why) => panic!("couldn't create {}: {}", title, why),
-                Ok(f) => f,
-            };
+            match configs.config.iter().find(|&c| c.name == title) {
+                Some(_) => {
+                    trace!("Potential overwrite detected");
+                    if Confirm::new()
+                        .with_prompt("This operation will overwrite a configuration. Continue?")
+                        .interact()?
+                    {
+                        // TODO overwrite configuration
+                        return Ok(());
+                    } else {
+                        return Ok(());
+                    }
+                }
+                None => {}
+            }
+
+            let mut file = File::create(todo_path(current_config.todo_folder.as_str(), title))?;
             let file_content = format!("+++\n{}\n{}\n+++\n{}", title, label, content);
-
-            let _ = match file.write_all(file_content.as_bytes()) {
-                Err(why) => panic!("couldn't write to file: {}", why),
-                Ok(_) => {}
-            };
-
-            println!("Created todo \"{}\", stored at {}", title, c.todo_folder);
+            file.write_all(file_content.as_bytes())?;
+            println!(
+                "Created todo \"{}\", stored at {}",
+                title, current_config.todo_folder
+            );
         }
         ("delete", Some(delete_matches)) => {
             trace!("delete subcommand");
-            println!("Listing all todo's from {}", c.todo_folder);
+            println!("Listing all todo's from {}", current_config.todo_folder);
 
             let title = delete_matches.value_of("title").unwrap();
-            remove_file(todo_path(c.todo_folder.as_str(), title)).unwrap();
+            remove_file(todo_path(current_config.todo_folder.as_str(), title)).unwrap();
         }
         ("edit", Some(edit_matches)) => {
             trace!("edit subcommand");
-            println!("Listing all todo's from {}", c.todo_folder);
+            println!("Listing all todo's from {}", current_config.todo_folder);
 
             let title = edit_matches.value_of("title").unwrap();
 
-            Command::new(c.ide.as_str())
-                .arg(todo_path(c.todo_folder.as_str(), title))
+            Command::new(current_config.ide.as_str())
+                .arg(todo_path(current_config.todo_folder.as_str(), title))
                 .status()
                 .expect("IDE error");
         }
         ("list", Some(list_matches)) => {
             trace!("list subcommand");
-            println!("Listing all todo's from {}", c.todo_folder);
 
-            for entry in WalkDir::new(c.todo_folder.as_str()) {
+            let labels = list_matches
+                .values_of("label")
+                .unwrap_or_default()
+                .collect::<Vec<_>>();
+            debug!("labels = {:?}", labels);
+
+            println!("Listing all todo's from {}", current_config.todo_folder);
+            for entry in WalkDir::new(current_config.todo_folder.as_str()) {
                 let entry = entry.unwrap();
                 if entry.file_type().is_dir() {
                     // first entry is the todo folder
@@ -379,7 +401,11 @@ fn main() -> Result<(), std::io::Error> {
                 }
                 debug!("{}", entry.path().to_str().unwrap());
                 match read_to_string(entry.path().to_str().unwrap()) {
-                    Ok(content) => println!("{}", content),
+                    Ok(content) => {
+                        if true {
+                            println!("{}", content);
+                        }
+                    }
                     Err(error) => panic!(
                         "Cannot open {}, error: {}",
                         entry.path().to_str().unwrap(),
@@ -392,6 +418,7 @@ fn main() -> Result<(), std::io::Error> {
             // TODO filter by label
         }
         ("", None) => {
+            // TODO force subcommand
             trace!("no subcommand was used");
         }
         _ => unreachable!(),
@@ -405,8 +432,8 @@ fn todo_path(todo_folder: &str, todo_title: &str) -> String {
     format!("{}/{}.md", todo_folder, todo_title)
 }
 
-/// Opens configuration file, returns current configuration and configurations
-fn config_file_content(todo_configuration_path: &str) -> Result<(String, String), std::io::Error> {
+/// Opens configuration file and returns current configuration and configurations.
+fn config_file_raw(todo_configuration_path: &str) -> Result<(String, String), std::io::Error> {
     trace!("Opening configuration file");
     debug!("todo_configuration_path: {}", todo_configuration_path);
     let mut file = std::fs::OpenOptions::new()
@@ -422,4 +449,24 @@ fn config_file_content(todo_configuration_path: &str) -> Result<(String, String)
     debug!("current_config_name: {}", current_config_name);
     debug!("configs: {}", configs);
     Ok((current_config_name.to_string(), configs.to_string()))
+}
+
+/// Takes raw input from configuration file and parse its content. This method will fail if the
+/// configuration file is badly formatted or the current configuration is invalid.
+fn parse_config_file(
+    todo_configuration_path: &str,
+) -> Result<(Configuration, ConfigurationVec), std::io::Error> {
+    let (current_config_name_raw, configs_raw) = config_file_raw(todo_configuration_path)?;
+    trace!("Parsing current configuration name");
+    let current_config: CurrentConfig = toml::from_str(current_config_name_raw.as_str())?;
+    trace!("Parsing configurations");
+    let cv: ConfigurationVec = toml::from_str(configs_raw.as_str())?;
+    trace!("Is current configuration valid?");
+    let conf = cv
+        .config
+        .iter()
+        .find(|&c| c.name == current_config.current_config)
+        .expect("No configuration matched current configuration name");
+    trace!("Current configuration is valid");
+    Ok((conf.clone(), cv))
 }

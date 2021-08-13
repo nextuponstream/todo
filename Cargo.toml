@@ -13,3 +13,4 @@ walkdir = "2.3.2"
 toml = "0.5.8"
 serde = { version = "1.0.127", features = ["derive"] }
 regex = "1.5.4"
+dialoguer = "0.8.0"
