@@ -15,6 +15,12 @@ struct CurrentConfig {
     current_config: String,
 }
 
+impl fmt::Display for CurrentConfig {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "current_config = \"{}\"", self.current_config)
+    }
+}
+
 #[derive(Clone, Deserialize, Debug)]
 struct Configuration {
     ide: String,
@@ -56,17 +62,32 @@ struct Todo {
     title: String,
     label: Vec<String>,
     content: String,
+    items: Vec<String>,
+    motives: Vec<String>,
 }
 
 impl fmt::Display for Todo {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(
             f,
-            "+++\nTITLE={}\nLABEL={}\n+++\n{}",
+            "+++\nTITLE={}\nLABEL={}\n+++\n{}\n",
             self.title,
             self.label.join(","),
             self.content
-        )
+        )?;
+        for i in self.items.iter() {
+            writeln!(f, "- [ ] {}", i)?;
+        }
+        if self.items.len() > 0 && self.motives.len() > 0 {
+            writeln!(f, "---")?;
+        }
+        let mut i = self.motives.len();
+        for m in self.motives.iter().rev() {
+            writeln!(f, "{} {}", i, m)?;
+            i = i - 1;
+        }
+
+        Ok(())
     }
 }
 
@@ -79,7 +100,6 @@ fn main() -> Result<(), std::io::Error> {
         ColorChoice::Auto,
     );
 
-    // TODO parse other arguments such as deadline, subcommands...
     // TODO autoversion
     // TODO autoauthors
     let app = App::new("todo Program")
@@ -87,6 +107,7 @@ fn main() -> Result<(), std::io::Error> {
         .author("Nextuponstream")
         .about("This CLI tool was inspired by kubectl apply/delete/get...");
     let app = app
+        .setting(AppSettings::SubcommandRequired)
         .subcommand(
             SubCommand::with_name("create")
                 .arg(
@@ -104,7 +125,9 @@ fn main() -> Result<(), std::io::Error> {
                         .long("title")
                         .value_name("TITLE")
                         .help("Sets title of todo")
-                        .takes_value(true),
+                        .takes_value(true)
+                        .required(true)
+                        .index(1),
                 )
                 .arg(
                     Arg::with_name("content")
@@ -113,8 +136,25 @@ fn main() -> Result<(), std::io::Error> {
                         .value_name("CONTENT")
                         .help("Sets content of todo")
                         .takes_value(true),
-                ), // TODO enumeration variant
-                   // TODO checklist variant
+                )
+                .arg(
+                    Arg::with_name("item")
+                        .short("i")
+                        .long("item")
+                        .multiple(true)
+                        .value_name("ITEM")
+                        .help("An item of your todo list")
+                        .takes_value(true),
+                )
+                .arg(
+                    Arg::with_name("motives")
+                        .short("m")
+                        .long("motives")
+                        .multiple(true)
+                        .value_name("MOTIVE")
+                        .help("list of motives that appears in reverse order of the todo")
+                        .takes_value(true),
+                ),
         )
         .subcommand(
             SubCommand::with_name("config")
@@ -200,6 +240,7 @@ fn main() -> Result<(), std::io::Error> {
                     .short("t")
                     .long("title")
                     .value_name("TITLE")
+                    .index(1)
                     .help("Title of todo to open")
                     .takes_value(true)
                     .required(true),
@@ -211,6 +252,7 @@ fn main() -> Result<(), std::io::Error> {
                     .short("t")
                     .long("title")
                     .value_name("TITLE")
+                    .index(1)
                     .help("Title of todo to delete")
                     .takes_value(true)
                     .required(true),
@@ -220,7 +262,7 @@ fn main() -> Result<(), std::io::Error> {
 
     let home = std::env::var("HOME").unwrap(); // can't use '~' since it needs to be expanded
     let tcp = format!("{}/.todo", home.as_str());
-    let todo_configuration_path = tcp.as_str(); // borrow checker at it again
+    let todo_configuration_path = tcp.as_str();
 
     match matches.subcommand() {
         ("config", Some(config_matches)) => match config_matches.subcommand() {
@@ -244,6 +286,9 @@ fn main() -> Result<(), std::io::Error> {
                         .unwrap()
                         .to_string(),
                 };
+                let current_config = CurrentConfig {
+                    current_config: config.name.clone(),
+                };
 
                 let (_, old_configs) = config_file_raw(todo_configuration_path)?;
                 let mut file = std::fs::OpenOptions::new()
@@ -251,19 +296,14 @@ fn main() -> Result<(), std::io::Error> {
                     .truncate(true)
                     .create(true)
                     .open(todo_configuration_path)?;
-                // TODO use fmt::Display from CurrentConfig struct
                 File::write(
                     &mut file,
-                    format!(
-                        "current_config = \"{}\"\n{}\n{}",
-                        config.name, old_configs, config
-                    )
-                    .as_bytes(),
+                    format!("{}{}\n{}", current_config, old_configs, config).as_bytes(),
                 )?;
 
                 println!(
                 "Successfully updated configuration at \"{}\"\nConfiguration was switched to `{}`",
-                todo_configuration_path, config.name
+                todo_configuration_path, current_config.current_config
             );
 
                 return Ok(());
@@ -315,6 +355,9 @@ fn main() -> Result<(), std::io::Error> {
                     .unwrap()
                     .to_string();
                 let (_, configs) = config_file_raw(todo_configuration_path)?;
+                let current_config = CurrentConfig {
+                    current_config: new_context,
+                };
 
                 trace!("Opening configuration file with write access...");
                 let mut file = std::fs::OpenOptions::new()
@@ -325,10 +368,10 @@ fn main() -> Result<(), std::io::Error> {
                 trace!("Writting to file");
                 File::write(
                     &mut file,
-                    format!("current_config = \"{}\"\n{}", new_context, configs).as_bytes(),
+                    format!("{}{}", current_config, configs).as_bytes(),
                 )?;
 
-                println!("Context was set to \"{}\"", new_context);
+                println!("Context was set to \"{}\"", current_config.current_config);
                 return Ok(());
             }
             _ => unreachable!(),
@@ -336,6 +379,7 @@ fn main() -> Result<(), std::io::Error> {
         _ => {}
     }
 
+    // other subcommands than config requires a working configuration file
     let current_config = parse_config_file(todo_configuration_path)?;
 
     match matches.subcommand() {
@@ -353,8 +397,18 @@ fn main() -> Result<(), std::io::Error> {
                     .unwrap_or_default()
                     .map(|s| s.to_string())
                     .collect(),
+                items: create_matches
+                    .values_of("item")
+                    .unwrap_or_default()
+                    .map(|s| s.to_string())
+                    .collect(),
+                motives: create_matches
+                    .values_of("motives")
+                    .unwrap_or_default()
+                    .map(|s| s.to_string())
+                    .collect(),
             };
-            debug!("{}", todo);
+            debug!("todo to create:\n{}", todo);
 
             // Individual files allow for manual editing without the pain of scrolling through
             // all other todo's.
@@ -385,10 +439,12 @@ fn main() -> Result<(), std::io::Error> {
         }
         ("delete", Some(delete_matches)) => {
             trace!("delete subcommand");
-            println!("Listing all todo's from {}", current_config.todo_folder);
 
             let title = delete_matches.value_of("title").unwrap();
-            remove_file(todo_path(current_config.todo_folder.as_str(), title)).unwrap();
+            match remove_file(todo_path(current_config.todo_folder.as_str(), title)) {
+                Ok(_) => println!("Successfully removed {}", title),
+                Err(_) => eprintln!("Error: File does not exist"),
+            }
         }
         ("edit", Some(edit_matches)) => {
             trace!("edit subcommand");
@@ -447,10 +503,6 @@ fn main() -> Result<(), std::io::Error> {
                     ),
                 }
             }
-        }
-        ("", None) => {
-            // TODO force subcommand
-            trace!("no subcommand was used");
         }
         _ => unreachable!(),
     }
