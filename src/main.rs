@@ -94,7 +94,7 @@ impl fmt::Display for Todo {
 fn main() -> Result<(), std::io::Error> {
     trace!("Program start");
     let _ = TermLogger::init(
-        LevelFilter::Trace, // TODO set to appropriate level before release
+        LevelFilter::Warn, // TODO set to appropriate level before release
         Config::default(),
         TerminalMode::Mixed,
         ColorChoice::Auto,
@@ -102,6 +102,7 @@ fn main() -> Result<(), std::io::Error> {
 
     // TODO autoversion
     // TODO autoauthors
+    // TODO document create/edit/delete
     let app = App::new("todo Program")
         .version("0.1")
         .author("Nextuponstream")
