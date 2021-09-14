@@ -1,6 +1,6 @@
 use clap::{App, AppSettings, Arg, SubCommand};
 use dialoguer::Confirm;
-use log::{debug, trace, warn};
+use log::{debug, trace};
 use regex::Regex;
 use serde::Deserialize;
 use simplelog::*;
@@ -94,10 +94,16 @@ impl fmt::Display for Todo {
 fn main() -> Result<(), std::io::Error> {
     trace!("Program start");
     let _ = TermLogger::init(
-        LevelFilter::Warn, // TODO set to appropriate level before release
+        LevelFilter::Debug, // TODO set to appropriate level before release
         Config::default(),
         TerminalMode::Mixed,
         ColorChoice::Auto,
+    );
+
+    let home = std::env::var("HOME").unwrap(); // can't use '~' since it needs to be expanded
+    let with_config_path_help_text = format!(
+        "Uses configuration file at CONFIG_PATH instead of default at \"{}/.todo\"",
+        home
     );
 
     // TODO autoversion
@@ -109,6 +115,23 @@ fn main() -> Result<(), std::io::Error> {
         .about("This CLI tool was inspired by kubectl apply/delete/get...");
     let app = app
         .setting(AppSettings::SubcommandRequired)
+        // this command is mostly for testing purposes
+        .arg(
+            Arg::with_name("with-config")
+                .short("r")
+                .long("with-config")
+                .value_name("CONFIG_RAW")
+                .help("Use <CONFIG_RAW> instead of configuration file")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("with-config-path")
+                .short("p")
+                .long("with-config-path")
+                .value_name("CONFIG_PATH")
+                .help(with_config_path_help_text.as_str())
+                .takes_value(true),
+        )
         .subcommand(
             SubCommand::with_name("create")
                 .arg(
@@ -261,9 +284,14 @@ fn main() -> Result<(), std::io::Error> {
         );
     let matches = app.get_matches();
 
-    let home = std::env::var("HOME").unwrap(); // can't use '~' since it needs to be expanded
-    let tcp = format!("{}/.todo", home.as_str());
-    let todo_configuration_path = tcp.as_str();
+    let default_todo_configuration_path = format!("{}/.todo", home.as_str());
+    let todo_configuration_path = matches
+        .value_of("with-config-path")
+        .unwrap_or(default_todo_configuration_path.as_str());
+
+    // other subcommands than config requires a working configuration file
+    let raw_config = matches.value_of("with-config");
+    debug!("raw_config = {:?}", raw_config);
 
     match matches.subcommand() {
         ("config", Some(config_matches)) => match config_matches.subcommand() {
@@ -291,7 +319,7 @@ fn main() -> Result<(), std::io::Error> {
                     current_config: config.name.clone(),
                 };
 
-                let (_, old_configs) = config_file_raw(todo_configuration_path)?;
+                let (_, old_configs) = config_file_raw(todo_configuration_path, raw_config)?;
                 let mut file = std::fs::OpenOptions::new()
                     .write(true)
                     .truncate(true)
@@ -311,37 +339,13 @@ fn main() -> Result<(), std::io::Error> {
             }
             ("current-context", Some(_)) => {
                 trace!("current-context");
-                let (current_config, _) = config_file_raw(todo_configuration_path)?;
-                debug!("current_config = {}", current_config);
-                let current_config_name = Regex::new(r#""(.*)""#)
-                    .unwrap()
-                    .find(current_config.as_str());
-                match current_config_name {
-                    Some(m) => {
-                        trace!("match found");
-                        let mut name = String::from(m.as_str());
-                        name.remove(0);
-                        name.pop();
-                        debug!("name = {}", name);
-                        if name.is_empty() {
-                            warn!("Context is not set");
-                            eprintln!("Context is not set");
-                            std::process::exit(1)
-                        } else {
-                            println!("{}", name);
-                            return Ok(());
-                        }
-                    }
-                    None => {
-                        warn!("No match was found. Bad configuration file");
-                        eprintln!("Bad configuration file: could not parse current configuration");
-                        std::process::exit(1)
-                    }
-                };
+                let current_config = parse_config_file(todo_configuration_path, raw_config)?;
+                println!("{}", current_config.name);
+                return Ok(());
             }
             ("get-contexts", Some(_)) => {
                 trace!("get-contexts");
-                let (_, configs_raw) = config_file_raw(todo_configuration_path)?;
+                let (_, configs_raw) = config_file_raw(todo_configuration_path, raw_config)?;
                 trace!("parsing toml table");
                 let configs: ConfigurationVec = toml::from_str(configs_raw.as_str())?;
                 debug!("parsed toml = {:?}", configs);
@@ -355,7 +359,7 @@ fn main() -> Result<(), std::io::Error> {
                     .value_of("new context")
                     .unwrap()
                     .to_string();
-                let (_, configs) = config_file_raw(todo_configuration_path)?;
+                let (_, configs) = config_file_raw(todo_configuration_path, raw_config)?;
                 let current_config = CurrentConfig {
                     current_config: new_context,
                 };
@@ -380,8 +384,7 @@ fn main() -> Result<(), std::io::Error> {
         _ => {}
     }
 
-    // other subcommands than config requires a working configuration file
-    let current_config = parse_config_file(todo_configuration_path)?;
+    let current_config = parse_config_file(todo_configuration_path, raw_config)?;
 
     match matches.subcommand() {
         ("create", Some(create_matches)) => {
@@ -516,22 +519,32 @@ fn todo_path(todo_folder: &str, todo_title: &str) -> String {
     format!("{}/{}.md", todo_folder, todo_title)
 }
 
-/// Opens configuration file and returns current configuration and configurations.
-fn config_file_raw(todo_configuration_path: &str) -> Result<(String, String), std::io::Error> {
-    trace!("Opening configuration file");
-    debug!("todo_configuration_path: {}", todo_configuration_path);
-    let mut file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(todo_configuration_path)
-        .expect(
-            "Missing configuration file or unable to open \"{}\", 
+/// Opens configuration file and returns current configuration and configurations. Uses `raw
+/// configuration` when supplied.
+fn config_file_raw(
+    todo_configuration_path: &str,
+    raw_configuration: Option<&str>,
+) -> Result<(String, String), std::io::Error> {
+    let mut file_content = String::new();
+    let content = match raw_configuration {
+        Some(c) => c,
+        None => {
+            trace!("Opening configuration file");
+            debug!("todo_configuration_path: {}", todo_configuration_path);
+            let mut file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(todo_configuration_path)
+                .expect(
+                    "Missing configuration file or unable to open \"{}\", 
 did you initialize it with `todo config`?\nError: {}",
-        );
+                );
+            file.read_to_string(&mut file_content)?;
+            file_content.as_str()
+        }
+    };
 
-    let mut content = String::new();
-    file.read_to_string(&mut content)?;
     debug!("content: {}", content);
     let (current_config_name, configs) = &content.split_once("\n").unwrap_or(("", ""));
     debug!("current_config_name: {}", current_config_name);
@@ -539,14 +552,19 @@ did you initialize it with `todo config`?\nError: {}",
     Ok((current_config_name.to_string(), configs.to_string()))
 }
 
-/// Takes raw input from configuration file and parse its content. This method will fail if the
-/// configuration file is badly formatted or the current configuration is invalid.
-fn parse_config_file(todo_configuration_path: &str) -> Result<Configuration, std::io::Error> {
-    let (current_config_name_raw, configs_raw) = config_file_raw(todo_configuration_path)?;
+/// Parses configuration file at `todo_configuration_path`. Uses supplied `configuration_raw` when
+/// provided. Fails when configuration file is either badly formatted or the current context is invalid.
+fn parse_config_file(
+    todo_configuration_path: &str,
+    configuration_raw: Option<&str>,
+) -> Result<Configuration, std::io::Error> {
+    let (current_config_name_raw, configs_raw) =
+        config_file_raw(todo_configuration_path, configuration_raw)?;
     trace!("Parsing current configuration name");
     let current_config: CurrentConfig = toml::from_str(current_config_name_raw.as_str())?;
     trace!("Parsing configurations");
-    let cv: ConfigurationVec = toml::from_str(configs_raw.as_str())?;
+    let configs_raw = configuration_raw.unwrap_or(configs_raw.as_str());
+    let cv: ConfigurationVec = toml::from_str(configs_raw)?;
     trace!("Is current configuration valid?");
     let conf = cv
         .config
