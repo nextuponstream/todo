@@ -6,7 +6,7 @@ use std::process::Command; // Run programs
 // https://github.com/rust-lang/rfcs/issues/1664
 fn init() {
     let _ = TermLogger::init(
-        LevelFilter::Debug,
+        LevelFilter::Warn,
         Config::default(),
         TerminalMode::Mixed,
         ColorChoice::Auto,
@@ -17,7 +17,7 @@ fn init() {
 fn has_help() -> Result<(), Box<dyn std::error::Error>> {
     init();
     let mut cmd = Command::cargo_bin("todo")?;
-    cmd.arg("config").arg("set-context").arg("--help");
+    cmd.arg("config").arg("active-context").arg("--help");
     cmd.assert().success();
 
     Ok(())

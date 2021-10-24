@@ -17,7 +17,7 @@ fn init() {
 fn has_help() -> Result<(), Box<dyn std::error::Error>> {
     init();
     let mut cmd = Command::cargo_bin("todo")?;
-    cmd.arg("config").arg("set-context").arg("--help");
+    cmd.arg("create").arg("--help");
     cmd.assert().success();
 
     Ok(())
