@@ -10,7 +10,7 @@ use todo::parse_active_ctx;
 
 fn main() -> Result<(), std::io::Error> {
     let _ = TermLogger::init(
-        LevelFilter::Trace, // TODO set to appropriate level before release
+        LevelFilter::Warn, // TODO set to appropriate level before release
         Config::default(),
         TerminalMode::Mixed,
         ColorChoice::Auto,

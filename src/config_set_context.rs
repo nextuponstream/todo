@@ -26,7 +26,8 @@ pub fn set_context_command_process(
 ) -> Result<(), std::io::Error> {
     trace!("set-context");
     debug!("set_context_matches: {:?}", args);
-    let new_context = args.value_of("new context").unwrap().to_string();
+    let new_context = args.value_of("context").unwrap().to_string();
+    debug!("new context: {}", new_context);
     let mut config = parse_configuration_file(Some(todo_configuration_path), raw_config)?;
     config.update_active_ctx(&new_context).unwrap();
 
