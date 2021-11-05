@@ -37,11 +37,12 @@ pub fn list_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), std:
         .unwrap_or_default()
         .collect::<Vec<_>>();
     debug!("labels = {:?}", labels);
-    let short = args.value_of("short").is_some();
+    debug!("short: {}", args.is_present("short"));
+    let short = args.is_present("short");
 
-    let re: Regex = Regex::new(r"LABEL=(.*)\n\+\+\+").unwrap();
+    let re: Regex = Regex::new(r"LABEL=(.*)\n---").unwrap();
 
-    println!("Listing all todo's from {}", ctx.todo_folder);
+    println!("Todo list from {}", ctx.todo_folder);
     for entry in WalkDir::new(ctx.todo_folder.as_str()) {
         let entry = entry.unwrap();
         if entry.file_type().is_dir() {
@@ -50,6 +51,7 @@ pub fn list_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), std:
         }
         let filepath = entry.path().to_str().unwrap();
         debug!("todo: {}", filepath);
+        debug!("short: {}", short);
         match read_to_string(filepath) {
             Ok(content) => {
                 let cs = re.captures(content.as_str()).unwrap();
@@ -67,6 +69,7 @@ pub fn list_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), std:
                     .collect::<Vec<String>>();
                 if labels.iter().all(|f| file_labels.iter().any(|fl| fl == f)) {
                     if short {
+                        // FIXME short not printed
                         print_short(content.as_str());
                     } else {
                         println!("{}", content);
@@ -86,6 +89,7 @@ pub fn list_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), std:
 
 /// Prints a short one-line summary of Todo item
 fn print_short(todo_raw: &str) {
+    trace!("print_short");
     let (finished, total) = parse_done_tasks(todo_raw);
     println!(
         "-- {}/{} - {}",
