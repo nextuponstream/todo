@@ -8,7 +8,7 @@ use std::io::Write;
 /// Returns set-context subcommand from config commmand
 pub fn set_context_command() -> App<'static, 'static> {
     App::new("set-context")
-        .about("Set Todo context")
+        .about("Set active Todo context")
         .author(crate_authors!())
         .arg(
             Arg::with_name("context")
