@@ -1,4 +1,4 @@
-//! Set active context from available contexts of configuration
+//! Set active Todo context among available contexts from configuration
 use super::parse_configuration_file;
 use clap::{crate_authors, App, Arg, ArgMatches};
 use log::{debug, trace};
@@ -18,7 +18,7 @@ pub fn set_context_command() -> App<'static, 'static> {
         )
 }
 
-/// Processes arguments and set active context if provided context exists within Todo configuration
+/// Sets active Todo context from configuration
 pub fn set_context_command_process(
     args: &ArgMatches,
     todo_configuration_path: &str,

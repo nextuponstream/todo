@@ -18,7 +18,7 @@ pub fn config_command() -> App<'static, 'static> {
         .subcommand(set_context_command())
 }
 
-/// Process arguments for the context configuration command
+/// Executes configuration command
 pub fn config_command_process(
     args: &ArgMatches,
     todo_configuration_path: &str,

@@ -1,13 +1,13 @@
-//! List all todo lists in active Todo context inside configuration
-use super::{parse_done_tasks, parse_title, Context};
-use crate::parse::parse_todo;
+//! List all Todo lists in active Todo context
+use super::Context;
+use crate::parse::{parse_todo_list, ParsedTodoList};
 use clap::{crate_authors, App, Arg, ArgMatches};
 use log::{debug, trace};
 use regex::Regex;
 use std::fs::read_to_string;
 use walkdir::WalkDir;
 
-/// Todo list subcommand
+/// Returns Todo list command
 pub fn list_command() -> App<'static, 'static> {
     App::new("list")
         .about("List all todo list within Todo context with tasks remaining")
@@ -41,7 +41,8 @@ pub fn list_command() -> App<'static, 'static> {
         )
 }
 
-/// Process arguments and list Todos from context according to given filters
+/// Lists Todo lists from Todo context while filtering by label and whether or not the task list is
+/// completed
 pub fn list_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), std::io::Error> {
     trace!("list subcommand");
 
@@ -57,8 +58,8 @@ pub fn list_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), std:
 
     let label_re: Regex = Regex::new(r"LABEL=(.*)\n---").unwrap();
 
-    println!("Todo lists from {}", ctx.todo_folder);
-    for entry in WalkDir::new(ctx.todo_folder.as_str()) {
+    println!("Todo lists from {}", ctx.folder_location);
+    for entry in WalkDir::new(ctx.folder_location.as_str()) {
         let entry = entry.unwrap();
         if entry.file_type().is_dir() {
             // first entry is the todo folder
@@ -69,7 +70,7 @@ pub fn list_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), std:
         debug!("short: {}", short);
         match read_to_string(filepath) {
             Ok(content) => {
-                let todo = parse_todo(&content).unwrap();
+                let todo = parse_todo_list(&content).unwrap();
                 let label_matches = label_re.captures(content.as_str()).unwrap();
                 if label_matches.len() == 1 {
                     eprintln!("Cannot parse {} labels", filepath);
@@ -108,14 +109,9 @@ pub fn list_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), std:
     Ok(())
 }
 
-/// Prints a short one-line summary of Todo item
+/// Prints a short one-line summary of Todo list
 fn print_short(todo_raw: &str) {
     trace!("print_short");
-    let (finished, total) = parse_done_tasks(todo_raw);
-    println!(
-        "{}/{}\t- {}",
-        finished,
-        total,
-        parse_title(todo_raw).unwrap()
-    );
+    let todo: ParsedTodoList = parse_todo_list(todo_raw).unwrap();
+    println!("{}/{}\t- {}", todo.done, todo.total, todo.title);
 }

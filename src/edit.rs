@@ -1,4 +1,4 @@
-//! Edit todo list in active Todo context inside configuration
+//! Edit Todo list in active Todo context
 use super::{todo_path, Context};
 use clap::{crate_authors, App, Arg, ArgMatches};
 use log::trace;
@@ -21,16 +21,15 @@ pub fn edit_command() -> App<'static, 'static> {
         )
 }
 
-/// Processes arguments and edits Todo given a name. Edit command opens IDE as configured in Todo
-/// context.
+/// Edits Todo list in active Todo context with configured IDE
 pub fn edit_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), std::io::Error> {
     trace!("edit subcommand");
-    println!("Listing all todo's from {}", ctx.todo_folder);
+    println!("Listing all todo's from {}", ctx.folder_location);
 
     let title = args.value_of("title").unwrap();
 
     Command::new(ctx.ide.as_str())
-        .arg(todo_path(ctx.todo_folder.as_str(), title))
+        .arg(todo_path(ctx.folder_location.as_str(), title))
         .status()
         .expect("IDE error");
 

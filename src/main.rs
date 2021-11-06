@@ -6,7 +6,7 @@ use todo::create::{create_command, create_command_process};
 use todo::delete::{delete_command, delete_command_process};
 use todo::edit::{edit_command, edit_command_process};
 use todo::list::{list_command, list_command_process};
-use todo::parse::parse_active_ctx;
+use todo::parse::parse_active_context;
 
 fn main() -> Result<(), std::io::Error> {
     let _ = TermLogger::init(
@@ -69,7 +69,7 @@ This tool was inspired from kubectl and git. This tool hopes to save some ink fr
         return config_command_process(args, todo_configuration_path, raw_config);
     }
 
-    let ctx = parse_active_ctx(Some(todo_configuration_path), raw_config)?;
+    let ctx = parse_active_context(Some(todo_configuration_path), raw_config)?;
 
     if let Some(args) = matches.subcommand_matches("create") {
         return create_command_process(args, &ctx);
