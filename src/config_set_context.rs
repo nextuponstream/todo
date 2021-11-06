@@ -28,18 +28,32 @@ pub fn set_context_command_process(
     debug!("set_context_matches: {:?}", args);
     let new_context = args.value_of("context").unwrap().to_string();
     debug!("new context: {}", new_context);
-    let mut config = parse_configuration_file(Some(todo_configuration_path), raw_config)?;
-    config.update_active_ctx(&new_context).unwrap();
+    match parse_configuration_file(Some(todo_configuration_path), raw_config) {
+        Ok(mut config) => {
+            let update = config.update_active_ctx(&new_context);
+            if update.is_err() {
+                eprintln!("{}", update.err().unwrap());
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    update.err().unwrap(),
+                ));
+            }
 
-    trace!("Opening configuration file with write access...");
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .create(true)
-        .open(todo_configuration_path)?;
-    trace!("Writting to file");
-    File::write(&mut file, format!("{}", config).as_bytes())?;
+            trace!("Opening configuration file with write access...");
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .create(true)
+                .open(todo_configuration_path)?;
+            trace!("Writting to file");
+            File::write(&mut file, toml::to_string(&config).unwrap().as_bytes())?;
 
-    println!("Context was set to \"{}\"", config.active_ctx_name);
-    Ok(())
+            println!("Context was set to \"{}\"", config.active_ctx_name);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            Err(e)
+        }
+    }
 }

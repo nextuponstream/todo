@@ -1,5 +1,5 @@
 //! Display Active Todo context from configuration
-use super::parse_active_ctx;
+use super::parse::parse_active_ctx;
 use clap::{crate_authors, App};
 use log::trace;
 

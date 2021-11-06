@@ -6,7 +6,7 @@ use todo::create::{create_command, create_command_process};
 use todo::delete::{delete_command, delete_command_process};
 use todo::edit::{edit_command, edit_command_process};
 use todo::list::{list_command, list_command_process};
-use todo::parse_active_ctx;
+use todo::parse::parse_active_ctx;
 
 fn main() -> Result<(), std::io::Error> {
     let _ = TermLogger::init(
