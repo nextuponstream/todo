@@ -1,10 +1,34 @@
+//! Parse Todo lists and configuration from raw file content with various functions
+//!
+//! Todo lists are meant to be edited by a user with the edit command. Therefore, one cannot
+//! serialize a Todo list with a crate and expect it to be managed by a human. This module parses also
+//! the configuration file.
 use super::{Configuration, Context};
 use log::{debug, trace};
 use regex::Regex;
 use std::io::Read;
 
-/// Opens configuration file and returns active Todo context and configurations. Uses `raw
-/// configuration` when supplied.
+/// Represents a parsed Todo list.
+///
+/// A parsed Todo list has many relevant informations such as its name and its task list status.
+pub struct ParsedTodoList {
+    pub raw: String,
+    pub title: String,
+    pub labels: Vec<String>,
+    pub done: usize,
+    pub total: usize,
+}
+
+impl ParsedTodoList {
+    /// Returns true if all items from task list are checked
+    pub fn tasks_are_all_done(&self) -> bool {
+        self.done == self.total
+    }
+}
+
+/// Returns configuration of all Todo contexts and the name of the active context
+///
+/// Uses `raw configuration` when supplied instead of `todo_configuration_path`.
 pub fn parse_configuration_file(
     todo_configuration_path: Option<&str>,
     raw_configuration: Option<&str>,
@@ -50,9 +74,10 @@ pub fn parse_configuration_file(
     Ok(configuration)
 }
 
-/// Parses configuration file at `todo_configuration_path`. Uses supplied `configuration_raw` when
-/// provided. Fails when configuration file is either badly formatted or the active context is invalid.
-pub fn parse_active_ctx(
+/// Returns active Todo context of configuration
+///
+/// Uses `raw configuration` when supplied instead of `todo_configuration_path`.
+pub fn parse_active_context(
     todo_configuration_path: Option<&str>,
     configuration_raw: Option<&str>,
 ) -> Result<Context, std::io::Error> {
@@ -66,30 +91,22 @@ pub fn parse_active_ctx(
     Ok(conf.clone())
 }
 
-pub struct ParsedTodo {
-    pub raw: String,
-    pub title: String,
-    pub labels: Vec<String>,
-    done: usize,
-    total: usize,
-}
-
-/// Parse raw input from todo file and extract relevant fields.
+/// Returns parsed Todo list
 ///
 /// The motivation for this function is that instead of saving all the content through serializing
 /// with a crate like Serde, the user can open the file and find it editable (think editing a json
 /// vs xml file).
-pub fn parse_todo(todo_raw: &str) -> Result<ParsedTodo, std::io::Error> {
-    let title = parse_title(todo_raw);
+pub fn parse_todo_list(todo_raw: &str) -> Result<ParsedTodoList, std::io::Error> {
+    let title = parse_todo_list_title(todo_raw);
     if title.is_none() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
             "Todo list does not have a title",
         ));
     }
-    let labels = parse_labels(todo_raw).unwrap();
-    let (done, total) = parse_done_tasks(todo_raw);
-    let todo = ParsedTodo {
+    let labels = parse_todo_list_labels(todo_raw).unwrap();
+    let (done, total) = parse_todo_list_tasks_status(todo_raw);
+    let todo = ParsedTodoList {
         raw: todo_raw.to_string(),
         title: title.unwrap(),
         labels,
@@ -100,14 +117,8 @@ pub fn parse_todo(todo_raw: &str) -> Result<ParsedTodo, std::io::Error> {
     Ok(todo)
 }
 
-impl ParsedTodo {
-    pub fn tasks_are_all_done(&self) -> bool {
-        self.done == self.total
-    }
-}
-
-/// Returns title from todo raw content
-pub fn parse_title(todo_raw: &str) -> Option<String> {
+/// Returns title from Todo list
+fn parse_todo_list_title(todo_raw: &str) -> Option<String> {
     let title_reg: Regex = Regex::new(r"---\nTITLE=(.+)\n").unwrap();
     debug!("todo_raw: {}", todo_raw);
     match title_reg.captures(todo_raw) {
@@ -124,9 +135,9 @@ pub fn parse_title(todo_raw: &str) -> Option<String> {
     }
 }
 
-/// Returns how many done tasks and total number of tasks. Tasks can be spread throughout the
+/// Returns the detailed informations about the task list of given Todo list. Tasks can be spread throughout the
 /// file.
-pub fn parse_done_tasks(todo_raw: &str) -> (usize, usize) {
+fn parse_todo_list_tasks_status(todo_raw: &str) -> (usize, usize) {
     trace!("parse_remaining_tasks");
     debug!("todo_raw: {}", todo_raw);
     let done_reg: Regex = Regex::new(r"(?m)^\* \[(.{1})\] .+$").unwrap();
@@ -141,10 +152,11 @@ pub fn parse_done_tasks(todo_raw: &str) -> (usize, usize) {
     (done, total)
 }
 
-/// Returns labels of Todo list.
-pub fn parse_labels(todo_raw: &str) -> Result<Vec<String>, std::io::Error> {
+/// Returns labels of Todo list
+fn parse_todo_list_labels(todo_raw: &str) -> Result<Vec<String>, std::io::Error> {
     let label_re: Regex = Regex::new(r"LABEL=(.*)\n---").unwrap();
     let label_matches = label_re.captures(todo_raw).unwrap();
+    debug!("label_matches: {:?}", label_matches);
     if label_matches.len() == 1 {
         eprintln!("Error while parsing labels");
         return Err(std::io::Error::new(
@@ -153,12 +165,26 @@ pub fn parse_labels(todo_raw: &str) -> Result<Vec<String>, std::io::Error> {
         ));
     }
 
+    debug!("get 1: {}", label_matches.get(1).unwrap().as_str());
+    // does collect to vec[""] but empty label is not a valid label
+    debug!(
+        "get 1: {:?}",
+        label_matches
+            .get(1)
+            .unwrap()
+            .as_str()
+            .split(",")
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<String>>()
+    );
     let file_labels = label_matches
         .get(1)
         .unwrap()
         .as_str()
         .split(",")
         .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
         .collect::<Vec<String>>();
 
     Ok(file_labels)
@@ -173,7 +199,7 @@ mod tests {
     // https://github.com/rust-lang/rfcs/issues/1664
     fn init() {
         let _ = TermLogger::init(
-            LevelFilter::Debug,
+            LevelFilter::Warn,
             Config::default(),
             TerminalMode::Mixed,
             ColorChoice::Auto,
@@ -202,16 +228,6 @@ LABEL=
 ";
 
     #[test]
-    fn empty_configuration_file_throws_error() {
-        init();
-        let mut config = Configuration {
-            active_ctx_name: String::from(""),
-            ctxs: vec![],
-        };
-        assert!(config.update_active_ctx("").is_err());
-    }
-
-    #[test]
     fn configuration_file_parses_configuration() {
         init();
         let todo_configuration_path = None;
@@ -225,61 +241,14 @@ LABEL=
                 assert_eq!(c1.name, "config1");
                 assert_eq!(c1.ide, "config1_ide");
                 assert_eq!(c1.timezone, "config1_timezone");
-                assert_eq!(c1.todo_folder, "/path/to/config1/folder");
+                assert_eq!(c1.folder_location, "/path/to/config1/folder");
                 let c2 = configuration.ctxs[2].clone();
                 assert_eq!(c2.name, "config1");
                 assert_eq!(c2.ide, "config1_ide");
                 assert_eq!(c2.timezone, "config1_timezone");
-                assert_eq!(c2.todo_folder, "/path/to/config1/folder");
+                assert_eq!(c2.folder_location, "/path/to/config1/folder");
             }
         }
-    }
-
-    #[test]
-    fn update_config_with_empty_title_fails() {
-        init();
-        let mut config = Configuration {
-            active_ctx_name: String::from("config1"),
-            ctxs: vec![
-                Context {
-                    ide: String::from(""),
-                    name: String::from("config1"),
-                    timezone: String::from(""),
-                    todo_folder: String::from(""),
-                },
-                Context {
-                    ide: String::from(""),
-                    name: String::from("config2"),
-                    timezone: String::from(""),
-                    todo_folder: String::from(""),
-                },
-            ],
-        };
-        assert!(config.update_active_ctx("").is_err());
-    }
-
-    #[test]
-    fn update_config_with_existing_config() {
-        init();
-        let mut config = Configuration {
-            active_ctx_name: String::from("config1"),
-            ctxs: vec![
-                Context {
-                    ide: String::from(""),
-                    name: String::from("config1"),
-                    timezone: String::from(""),
-                    todo_folder: String::from(""),
-                },
-                Context {
-                    ide: String::from(""),
-                    name: String::from("config2"),
-                    timezone: String::from(""),
-                    todo_folder: String::from(""),
-                },
-            ],
-        };
-        assert!(config.update_active_ctx("config2").is_ok());
-        assert_eq!(config.active_ctx_name, "config2");
     }
 
     #[test]
@@ -292,13 +261,13 @@ LABEL=
                     ide: String::from(""),
                     name: String::from("config1"),
                     timezone: String::from(""),
-                    todo_folder: String::from(""),
+                    folder_location: String::from(""),
                 },
                 Context {
                     ide: String::from(""),
                     name: String::from("config2"),
                     timezone: String::from(""),
-                    todo_folder: String::from(""),
+                    folder_location: String::from(""),
                 },
             ],
         };
@@ -309,7 +278,7 @@ LABEL=
     fn parse_todo_empty_title_produces_error() {
         init();
         let todo_raw = TODO_BAREBONES;
-        let todo = parse_todo(todo_raw);
+        let todo = parse_todo_list(todo_raw);
         assert!(todo.is_err());
     }
 
@@ -322,7 +291,7 @@ TITLE=simple title
 LABEL=l1,l2,l3
 ---
 ";
-        let todo = parse_todo(todo_raw);
+        let todo = parse_todo_list(todo_raw);
         assert!(todo.is_ok());
         let todo = todo.unwrap();
         assert_eq!(todo.title, "simple title");
@@ -330,6 +299,7 @@ LABEL=l1,l2,l3
         assert!(todo.labels.contains(&String::from("l1")));
         assert!(todo.labels.contains(&String::from("l2")));
         assert!(todo.labels.contains(&String::from("l3")));
+        assert_eq!(todo.labels.len(), 3);
     }
 
     #[test]
@@ -341,7 +311,20 @@ TITLE=
 LABEL=
 ---
 ";
-        assert!(parse_title(todo_raw).is_none());
+        assert!(parse_todo_list_title(todo_raw).is_none());
+    }
+
+    #[test]
+    fn parse_todo_no_labels() {
+        init();
+        let todo_raw = "\
+---
+TITLE=title
+LABEL=
+---
+";
+        let todo = parse_todo_list(todo_raw).unwrap();
+        assert_eq!(todo.labels.len(), 0);
     }
 
     #[test]
@@ -353,7 +336,7 @@ TITLE=
 LABEL=
 ---
 ";
-        let (done, total) = parse_done_tasks(todo_raw);
+        let (done, total) = parse_todo_list_tasks_status(todo_raw);
         assert_eq!(0, done);
         assert_eq!(0, total);
     }
@@ -371,11 +354,11 @@ LABEL=
 
 ---
 ";
-        let (done, total) = parse_done_tasks(todo_raw);
+        let (done, total) = parse_todo_list_tasks_status(todo_raw);
         assert_eq!(0, done);
         assert_eq!(1, total);
 
-        assert!(!parse_todo(todo_raw).unwrap().tasks_are_all_done());
+        assert!(!parse_todo_list(todo_raw).unwrap().tasks_are_all_done());
     }
 
     #[test]
@@ -391,11 +374,11 @@ LABEL=
 
 ---
 ";
-        let (done, total) = parse_done_tasks(todo_raw);
+        let (done, total) = parse_todo_list_tasks_status(todo_raw);
         assert_eq!(1, done);
         assert_eq!(1, total);
 
-        assert!(parse_todo(todo_raw).unwrap().tasks_are_all_done());
+        assert!(parse_todo_list(todo_raw).unwrap().tasks_are_all_done());
     }
 
     #[test]
@@ -415,11 +398,11 @@ LABEL=
 
 ---
 ";
-        let (done, total) = parse_done_tasks(todo_raw);
+        let (done, total) = parse_todo_list_tasks_status(todo_raw);
         assert_eq!(2, done, "wrong number of done tasks");
         assert_eq!(5, total);
 
-        assert!(!parse_todo(todo_raw).unwrap().tasks_are_all_done());
+        assert!(!parse_todo_list(todo_raw).unwrap().tasks_are_all_done());
     }
 
     #[test]
@@ -439,10 +422,10 @@ LABEL=
 
 ---
 ";
-        let (done, total) = parse_done_tasks(todo_raw);
+        let (done, total) = parse_todo_list_tasks_status(todo_raw);
         assert_eq!(5, done);
         assert_eq!(5, total);
 
-        assert!(parse_todo(todo_raw).unwrap().tasks_are_all_done());
+        assert!(parse_todo_list(todo_raw).unwrap().tasks_are_all_done());
     }
 }

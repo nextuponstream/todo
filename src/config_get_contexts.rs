@@ -1,4 +1,4 @@
-//! Get all available contexts from configuration
+//! Display all available Todo contexts from configuration
 use super::parse_configuration_file;
 use clap::{crate_authors, App};
 use log::trace;

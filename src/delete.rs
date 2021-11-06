@@ -1,4 +1,4 @@
-//! Delete todo list from active Todo context inside configuration
+//! Delete Todo list from active Todo context inside configuration
 use super::todo_path;
 use super::Context;
 use clap::crate_authors;
@@ -23,14 +23,12 @@ pub fn delete_command() -> App<'static, 'static> {
         )
 }
 
-/// Processes and deletes Todo by title
-///
-/// TODO is the title unique to context???
+/// Deletes Todo list from active Todo context
 pub fn delete_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), std::io::Error> {
     trace!("delete subcommand");
 
     let title = args.value_of("title").unwrap();
-    match remove_file(todo_path(ctx.todo_folder.as_str(), title)) {
+    match remove_file(todo_path(ctx.folder_location.as_str(), title)) {
         Ok(_) => println!("Successfully removed {}", title),
         Err(_) => eprintln!("Error: File does not exist"),
     }

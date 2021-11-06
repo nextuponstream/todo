@@ -1,4 +1,4 @@
-//! Create todo context inside configuration
+//! Create new Todo context inside configuration
 use super::{parse_configuration_file, Configuration, Context};
 use clap::{crate_authors, App, Arg, ArgMatches};
 use log::{debug, trace, warn};
@@ -6,7 +6,7 @@ use read_input::prelude::*;
 use std::fs::File;
 use std::io::Write;
 
-/// Returns create context subcommand from config command
+/// Returns create-context subcommand from config command
 pub fn create_context_command() -> App<'static, 'static> {
     App::new("create-context")
         .about("Create a new Todo context")
@@ -49,8 +49,7 @@ pub fn create_context_command() -> App<'static, 'static> {
         )
 }
 
-/// Processes arguments and creates new Todo context in configuration. After Todo context creation,
-/// sets active context to the newly created context.
+/// Creates new Todo context inside configuration, then sets it to be the active context
 pub fn config_create_context_process(
     args: &ArgMatches,
     todo_configuration_path: &str,
@@ -61,7 +60,7 @@ pub fn config_create_context_process(
         ide: args.value_of("ide").unwrap().to_string(),
         name: args.value_of("name").unwrap().to_string(),
         timezone: args.value_of("timezone").unwrap().to_string(),
-        todo_folder: args.value_of("todo_folder").unwrap().to_string(),
+        folder_location: args.value_of("todo_folder").unwrap().to_string(),
     };
 
     let config = parse_configuration_file(Some(todo_configuration_path), raw_config);
