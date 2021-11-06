@@ -6,7 +6,7 @@ use log::trace;
 /// Returns active-context subcommand from configuration command
 pub fn active_context_command() -> App<'static, 'static> {
     App::new("active-context")
-        .about("shows active Todo context")
+        .about("Shows active Todo context")
         .author(crate_authors!())
 }
 

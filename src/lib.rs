@@ -1,9 +1,9 @@
-//! Todo is a tool to help you create todos, todo contexts and manage them. Just
-//! like Git, Todo is comprised of multiple subcommmands arranged in their
+//! Todo is a tool to help you create Todo lists, Todo contexts and manage them.
+//!
+//! Just like Git, Todo is comprised of multiple subcommmands arranged in their
 //! respective modules.
 //!
-//! Compile the tool and start using it with TODO more details needed<br>
-//! `todo --version`
+//! Follow the `README.md` to know more about the installation.
 use parse::parse_configuration_file;
 use serde::{Deserialize, Serialize};
 use std::fmt;
