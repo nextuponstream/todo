@@ -1,5 +1,7 @@
 # todo
 
+![CI](https://github.com/nextuponstream/todo/actions/workflows/ci.yml/badge.svg)
+
 A utility CLI tool to create todo's with tags and deadlines. Todo's are saved to
 your specified folder (preferably a synchronized folder).
 
