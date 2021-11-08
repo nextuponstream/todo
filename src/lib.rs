@@ -35,9 +35,15 @@ impl fmt::Display for Context {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(
             f,
-            "[[config]]\nname = \"{}\"\nide = \"{}\"\ntimezone = \"{}\"\ntodo_folder = \"{}\"",
+            "--- Context ---\nname: {}\nide: {}\ntimezone: {}\nfolder location: {}",
             self.name, self.ide, self.timezone, self.folder_location
         )
+    }
+}
+
+impl Context {
+    fn short(&self) -> String {
+        format!("{}", self.name)
     }
 }
 
