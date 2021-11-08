@@ -32,8 +32,8 @@ pub fn config_command_process(
         return active_context_command_process(todo_configuration_path, raw_config);
     }
 
-    if let Some(_) = args.subcommand_matches("get-contexts") {
-        return get_contexts_command_process(todo_configuration_path, raw_config);
+    if let Some(args) = args.subcommand_matches("get-contexts") {
+        return get_contexts_command_process(args, todo_configuration_path, raw_config);
     }
 
     if let Some(set_context_matches) = args.subcommand_matches("set-context") {

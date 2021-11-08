@@ -1,5 +1,6 @@
 use clap::{crate_authors, crate_version, App, AppSettings, Arg};
 use log::{debug, warn};
+//use simplelog::*;
 use todo::config::{config_command, config_command_process};
 use todo::create::{create_command, create_command_process};
 use todo::delete::{delete_command, delete_command_process};
@@ -8,6 +9,13 @@ use todo::list::{list_command, list_command_process};
 use todo::parse::parse_active_context;
 
 fn main() -> Result<(), std::io::Error> {
+    // TODO comment before release
+    //let _ = TermLogger::init(
+    //    LevelFilter::Debug,
+    //    Config::default(),
+    //    TerminalMode::Mixed,
+    //    ColorChoice::Auto,
+    //);
     let home = std::env::var("HOME").unwrap(); // can't use '~' since it needs to be expanded
     let with_config_path_help_text = format!(
         "Uses configuration file at CONFIG_PATH instead of default at \"{}/.todo\"",
