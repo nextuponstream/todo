@@ -4,6 +4,8 @@ use clap::{crate_authors, App, Arg, ArgMatches};
 use dialoguer::Confirm;
 use log::{debug, trace};
 use std::fs::read_to_string;
+use std::path::Path;
+use std::process::exit;
 
 /// Returns Todo create command
 pub fn create_command() -> App<'static, 'static> {
@@ -86,6 +88,9 @@ pub fn create_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), st
     // Individual files allow for manual editing without the pain of scrolling through
     // all other todo's.
     let filepath = todo_path(ctx.folder_location.as_str(), todo.title.as_str());
+
+    prompt_for_todo_folder_if_not_exists(ctx, &todo)?;
+
     match read_to_string(&filepath) {
         Ok(_) => {
             trace!("Potential overwrite detected");
@@ -109,4 +114,25 @@ pub fn create_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), st
     println!("Saved todo \"{}\" ({})", todo.title, ctx.folder_location);
 
     Ok(())
+}
+
+/// Prompts user for Todo folder creation if it does not exists. Exits if user answer is negative.
+fn prompt_for_todo_folder_if_not_exists(
+    ctx: &Context,
+    todo_list: &TodoList,
+) -> Result<(), std::io::Error> {
+    Ok(if !Path::exists(Path::new(ctx.folder_location.as_str())) {
+        if Confirm::new()
+            .with_prompt(format!(
+                "Todo folder location for this context does not exists. {} cannot be created. Create {} ?",
+                todo_list.title,
+                ctx.folder_location
+            ))
+            .interact()?
+        {
+            std::fs::create_dir(ctx.folder_location.as_str())?;
+        } else {
+            exit(0);
+        }
+    })
 }
