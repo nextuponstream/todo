@@ -84,7 +84,7 @@ pub fn list_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), std:
                     .split(",")
                     .map(|s| s.to_string())
                     .collect::<Vec<String>>();
-                if labels.iter().all(|f| file_labels.iter().any(|fl| fl == f)) {
+                if labels.iter().all(|l| file_labels.iter().any(|fl| fl == l)) {
                     let is_done = todo.tasks_are_all_done();
                     // so XOR is a thing: https://doc.rust-lang.org/reference/types/boolean.html#logical-xor
                     if !all && (is_done ^ done) {
