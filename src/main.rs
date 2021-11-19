@@ -6,7 +6,7 @@ use todo::create::{create_command, create_command_process};
 use todo::delete::{delete_command, delete_command_process};
 use todo::edit::{edit_command, edit_command_process};
 use todo::list::{list_command, list_command_process};
-use todo::parse::parse_active_context;
+use todo::parse::{parse_active_context, parse_configuration_file};
 
 fn main() -> Result<(), std::io::Error> {
     // TODO comment before release
@@ -70,6 +70,7 @@ This tool was inspired from kubectl and git. This tool hopes to save some ink fr
     }
 
     let ctx = parse_active_context(Some(todo_configuration_path), raw_config)?;
+    let config = parse_configuration_file(Some(todo_configuration_path), raw_config)?;
 
     if let Some(args) = matches.subcommand_matches("create") {
         return create_command_process(args, &ctx);
@@ -84,7 +85,7 @@ This tool was inspired from kubectl and git. This tool hopes to save some ink fr
     }
 
     if let Some(args) = matches.subcommand_matches("list") {
-        return list_command_process(args, &ctx);
+        return list_command_process(args, &config);
     }
 
     warn!("Unrecognised subcommand");
