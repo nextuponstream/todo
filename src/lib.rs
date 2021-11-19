@@ -129,10 +129,10 @@ impl fmt::Display for TodoList {
 
         if !self.motives.is_empty() {
             writeln!(f, "# Motives\n")?;
-            let mut i = self.motives.len();
-            for m in self.motives.iter().rev() {
+            let mut i = 1;
+            for m in self.motives.iter() {
                 writeln!(f, "{}. {}", i, m)?;
-                i = i - 1;
+                i = i + 1;
             }
             writeln!(f, "\n---")?;
         }
@@ -214,8 +214,8 @@ This is the hello todo list
 
 # Motives
 
-2. m2 second
 1. m1 first
+2. m2 second
 
 ---
 ",
