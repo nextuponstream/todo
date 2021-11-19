@@ -107,10 +107,9 @@ pub struct TodoList {
 
 impl fmt::Display for TodoList {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // TODO put title on top of the file with first level of heading like so `# Title`
         writeln!(
             f,
-            "---\nTITLE={}\nLABEL={}\n---",
+            "# {}\n\n---\nLABEL={}\n---",
             self.title,
             self.labels.join(","),
         )?;
@@ -165,8 +164,9 @@ mod tests {
     }
 
     const TODO_BAREBONES: &'static str = "\
+# Title
+
 ---
-TITLE=
 LABEL=
 ---
 ";
@@ -175,7 +175,7 @@ LABEL=
     fn barebones_todo() {
         init();
         let todo = TodoList {
-            title: String::from(""),
+            title: String::from("Title"),
             labels: vec![],
             description: String::from(""),
             list_items: vec![],
@@ -190,7 +190,7 @@ LABEL=
     fn all_options_todo() {
         init();
         let todo = TodoList {
-            title: String::from("hello"),
+            title: String::from("Title"),
             labels: vec![String::from("l1"), String::from("l2")],
             description: String::from("This is the hello todo list"),
             list_items: vec![String::from("i1 first"), String::from("i2 second")],
@@ -198,8 +198,9 @@ LABEL=
         };
         let expected = String::from(
             "\
+# Title
+
 ---
-TITLE=hello
 LABEL=l1,l2
 ---
 This is the hello todo list
