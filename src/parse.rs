@@ -119,7 +119,7 @@ pub fn parse_todo_list(todo_raw: &str) -> Result<ParsedTodoList, std::io::Error>
 
 /// Returns title from Todo list
 fn parse_todo_list_title(todo_raw: &str) -> Option<String> {
-    let title_reg: Regex = Regex::new(r"---\nTITLE=(.+)\n").unwrap();
+    let title_reg: Regex = Regex::new(r"^# (.+)\n").unwrap();
     debug!("todo_raw: {}", todo_raw);
     match title_reg.captures(todo_raw) {
         None => None,
@@ -286,15 +286,16 @@ LABEL=
     fn parse_todo_simple() {
         init();
         let todo_raw = "\
+# Title
+
 ---
-TITLE=simple title
 LABEL=l1,l2,l3
 ---
 ";
-        let todo = parse_todo_list(todo_raw);
-        assert!(todo.is_ok());
-        let todo = todo.unwrap();
-        assert_eq!(todo.title, "simple title");
+        let todo_list = parse_todo_list(todo_raw);
+        assert!(todo_list.is_ok());
+        let todo = todo_list.unwrap();
+        assert_eq!(todo.title, "Title");
         assert_eq!(todo.raw, todo_raw);
         assert!(todo.labels.contains(&String::from("l1")));
         assert!(todo.labels.contains(&String::from("l2")));
@@ -306,8 +307,9 @@ LABEL=l1,l2,l3
     fn empty_title() {
         init();
         let todo_raw = "\
+# 
+
 ---
-TITLE=
 LABEL=
 ---
 ";
@@ -318,8 +320,9 @@ LABEL=
     fn parse_todo_no_labels() {
         init();
         let todo_raw = "\
+# Title
+
 ---
-TITLE=title
 LABEL=
 ---
 ";
@@ -331,8 +334,9 @@ LABEL=
     fn parse_no_tasks() {
         init();
         let todo_raw = "\
+# Title
+
 ---
-TITLE=
 LABEL=
 ---
 ";
@@ -345,8 +349,9 @@ LABEL=
     fn parse_one_remaining_tasks() {
         init();
         let todo_raw = "\
+# Title
+
 ---
-TITLE=title
 LABEL=
 ---
 
@@ -365,8 +370,9 @@ LABEL=
     fn parse_one_done_tasks() {
         init();
         let todo_raw = "\
+# Title
+
 ---
-TITLE=title
 LABEL=
 ---
 
@@ -385,8 +391,9 @@ LABEL=
     fn parse_multiple_remaining_tasks() {
         init();
         let todo_raw = "\
+# Title
+
 ---
-TITLE=title
 LABEL=
 ---
 
@@ -409,8 +416,9 @@ LABEL=
     fn parse_multiple_all_done_tasks() {
         init();
         let todo_raw = "\
+# Title
+
 ---
-TITLE=title
 LABEL=
 ---
 
