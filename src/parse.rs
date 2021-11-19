@@ -139,22 +139,36 @@ fn parse_todo_list_title(todo_raw: &str) -> Option<String> {
 /// file.
 fn parse_todo_list_tasks_status(todo_raw: &str) -> (usize, usize) {
     trace!("parse_remaining_tasks");
-    debug!("todo_raw: {}", todo_raw);
-    let done_reg: Regex = Regex::new(r"(?m)^\* \[(.{1})\] .+$").unwrap();
-    let mut done = 0;
-    let matches = done_reg.find_iter(todo_raw);
-    let total = matches.count();
-    for mat in done_reg.find_iter(todo_raw) {
-        if mat.as_str().get(0..6).unwrap().eq("* [x] ") {
-            done = done + 1;
+    debug!("todo_raw: {:?}", todo_raw);
+    let todo_list_reg: Regex = Regex::new(r"(?s)\n\n## Todo list\n\n(.*)\n").unwrap();
+    let todo_list = todo_list_reg.captures(todo_raw);
+    debug!("{:?}", todo_list);
+    match todo_list {
+        None => (0, 0),
+        Some(caps) => {
+            if caps.len() == 1 {
+                (0, 0)
+            } else {
+                debug!("caps: {:?}", caps);
+                let done_reg: Regex = Regex::new(r"(?m)^\* \[(.{1})\] .+$").unwrap();
+                let mut done = 0;
+                let todo_list = &caps[1];
+                let matches = done_reg.find_iter(todo_list);
+                let total = matches.count();
+                for mat in done_reg.find_iter(todo_list) {
+                    if mat.as_str().get(0..6).unwrap().eq("* [x] ") {
+                        done = done + 1;
+                    }
+                }
+                (done, total)
+            }
         }
     }
-    (done, total)
 }
 
 /// Returns labels of Todo list
 fn parse_todo_list_labels(todo_raw: &str) -> Result<Vec<String>, std::io::Error> {
-    let label_re: Regex = Regex::new(r"LABEL=(.*)\n---").unwrap();
+    let label_re: Regex = Regex::new(r"## Description\n\nLABEL=(.*)").unwrap();
     let label_matches = label_re.captures(todo_raw).unwrap();
     debug!("label_matches: {:?}", label_matches);
     if label_matches.len() == 1 {
@@ -220,13 +234,6 @@ ide = \"config2_ide\"
 timezone = \"config2_timezone\"
 todo_folder = \"/path/to/config2/folder\"";
 
-    const TODO_BAREBONES: &'static str = "\
----
-TITLE=
-LABEL=
----
-";
-
     #[test]
     fn configuration_file_parses_configuration() {
         init();
@@ -277,7 +284,13 @@ LABEL=
     #[test]
     fn parse_todo_empty_title_produces_error() {
         init();
-        let todo_raw = TODO_BAREBONES;
+        let todo_raw = "\
+# 
+
+## Description
+
+LABEL=
+";
         let todo = parse_todo_list(todo_raw);
         assert!(todo.is_err());
     }
@@ -288,9 +301,9 @@ LABEL=
         let todo_raw = "\
 # Title
 
----
+## Description
+
 LABEL=l1,l2,l3
----
 ";
         let todo_list = parse_todo_list(todo_raw);
         assert!(todo_list.is_ok());
@@ -309,9 +322,9 @@ LABEL=l1,l2,l3
         let todo_raw = "\
 # 
 
----
+## Description
+
 LABEL=
----
 ";
         assert!(parse_todo_list_title(todo_raw).is_none());
     }
@@ -322,9 +335,9 @@ LABEL=
         let todo_raw = "\
 # Title
 
----
+## Description
+
 LABEL=
----
 ";
         let todo = parse_todo_list(todo_raw).unwrap();
         assert_eq!(todo.labels.len(), 0);
@@ -336,9 +349,9 @@ LABEL=
         let todo_raw = "\
 # Title
 
----
+## Description
+
 LABEL=
----
 ";
         let (done, total) = parse_todo_list_tasks_status(todo_raw);
         assert_eq!(0, done);
@@ -351,13 +364,14 @@ LABEL=
         let todo_raw = "\
 # Title
 
----
+## Description
+
 LABEL=
----
+
+## Todo list
 
 * [ ] idk man
 
----
 ";
         let (done, total) = parse_todo_list_tasks_status(todo_raw);
         assert_eq!(0, done);
@@ -372,13 +386,14 @@ LABEL=
         let todo_raw = "\
 # Title
 
----
+## Description
+
 LABEL=
----
+
+## Todo list
 
 * [x] idk man
 
----
 ";
         let (done, total) = parse_todo_list_tasks_status(todo_raw);
         assert_eq!(1, done);
@@ -393,9 +408,11 @@ LABEL=
         let todo_raw = "\
 # Title
 
----
+## Description
+
 LABEL=
----
+
+## Todo list
 
 * [ ] idk man
 * [x] idk man
@@ -403,7 +420,6 @@ LABEL=
 * [x] idk man
 * [ ] idk man
 
----
 ";
         let (done, total) = parse_todo_list_tasks_status(todo_raw);
         assert_eq!(2, done, "wrong number of done tasks");
@@ -418,9 +434,11 @@ LABEL=
         let todo_raw = "\
 # Title
 
----
+## Description
+
 LABEL=
----
+
+## Todo list
 
 * [x] idk man
 * [x] idk man
@@ -428,7 +446,38 @@ LABEL=
 * [x] idk man
 * [x] idk man
 
----
+";
+        let (done, total) = parse_todo_list_tasks_status(todo_raw);
+        assert_eq!(5, done);
+        assert_eq!(5, total);
+
+        assert!(parse_todo_list(todo_raw).unwrap().tasks_are_all_done());
+    }
+
+    #[test]
+    fn parse_tasks_only_in_todo_list_section() {
+        init();
+        let todo_raw = "\
+# Title
+
+## Description
+
+LABEL=
+
+## Description 
+
+Confusing description
+
+* [x] confusing point
+
+## Todo list
+
+* [x] idk man
+* [x] idk man
+* [x] idk man
+* [x] idk man
+* [x] idk man
+
 ";
         let (done, total) = parse_todo_list_tasks_status(todo_raw);
         assert_eq!(5, done);

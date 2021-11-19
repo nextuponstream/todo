@@ -109,31 +109,29 @@ impl fmt::Display for TodoList {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(
             f,
-            "# {}\n\n---\nLABEL={}\n---",
+            "# {}\n\n## Description\n\nLABEL={}",
             self.title,
             self.labels.join(","),
         )?;
 
         if !self.description.is_empty() {
-            writeln!(f, "{}\n---\n", self.description)?;
+            writeln!(f, "{}", self.description)?;
         }
 
         if !self.list_items.is_empty() {
-            writeln!(f, "# Todo\n")?;
+            writeln!(f, "\n## Todo list\n")?;
             for i in self.list_items.iter() {
                 writeln!(f, "* [ ] {}", i)?;
             }
-            writeln!(f, "\n---\n")?;
         }
 
         if !self.motives.is_empty() {
-            writeln!(f, "# Motives\n")?;
+            writeln!(f, "\n## Motives\n")?;
             let mut i = 1;
             for m in self.motives.iter() {
                 writeln!(f, "{}. {}", i, m)?;
                 i = i + 1;
             }
-            writeln!(f, "\n---")?;
         }
 
         Ok(())
@@ -166,9 +164,9 @@ mod tests {
     const TODO_BAREBONES: &'static str = "\
 # Title
 
----
+## Description
+
 LABEL=
----
 ";
 
     #[test]
@@ -200,25 +198,20 @@ LABEL=
             "\
 # Title
 
----
-LABEL=l1,l2
----
-This is the hello todo list
----
+## Description
 
-# Todo
+LABEL=l1,l2
+This is the hello todo list
+
+## Todo list
 
 * [ ] i1 first
 * [ ] i2 second
 
----
-
-# Motives
+## Motives
 
 1. m1 first
 2. m2 second
-
----
 ",
         );
         let output = format!("{}", todo);
