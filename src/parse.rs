@@ -140,9 +140,9 @@ fn parse_todo_list_title(todo_raw: &str) -> Option<String> {
 fn parse_todo_list_tasks_status(todo_raw: &str) -> (usize, usize) {
     trace!("parse_remaining_tasks");
     debug!("todo_raw: {:?}", todo_raw);
-    let todo_list_reg: Regex = Regex::new(r"(?s)\n\n## Todo list\n\n(.*)\n").unwrap();
+    let todo_list_reg: Regex = Regex::new(r"(?s)\n\n## Todo list\n\n(.*)").unwrap();
     let todo_list = todo_list_reg.captures(todo_raw);
-    debug!("{:?}", todo_list);
+    debug!("todo_list: {:?}", todo_list);
     match todo_list {
         None => (0, 0),
         Some(caps) => {
