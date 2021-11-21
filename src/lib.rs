@@ -47,7 +47,7 @@ impl Context {
     }
 }
 
-#[derive(Deserialize, Debug, Serialize)]
+#[derive(Deserialize, Debug, Serialize, Clone)]
 /// Represents all Todo contexts and the active context of the configuration
 pub struct Configuration {
     active_ctx_name: String,
@@ -77,17 +77,20 @@ impl Configuration {
             return Err("Active context has no name");
         }
 
-        if self
-            .ctxs
-            .iter()
-            .find(|ctx| ctx.name == new_active_ctx_name)
-            .is_none()
-        {
+        let mut new_config = self.clone();
+        new_config.active_ctx_name = new_active_ctx_name.to_string();
+
+        if !new_config.is_valid() {
             return Err("No matching context could be found among available contexts");
         }
 
         self.active_ctx_name = new_active_ctx_name.to_string();
         Ok(())
+    }
+
+    /// Returns true if configuration active context name matches with any context
+    fn is_valid(&self) -> bool {
+        self.ctxs.iter().any(|c| c.name == self.active_ctx_name)
     }
 }
 
