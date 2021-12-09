@@ -5,7 +5,7 @@ use crate::{
 };
 use clap::{crate_authors, App, Arg, ArgMatches};
 use log::{debug, trace};
-use std::fs::read_to_string;
+use std::{fs::read_to_string, path::Path};
 use walkdir::WalkDir;
 
 /// Returns Todo list command
@@ -158,12 +158,17 @@ fn list_message(
                     return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
                 }
             };
-            if entry.file_type().is_dir() {
-                // first entry is the todo folder
+            if !entry.file_type().is_file() {
+                // first entry is the todo folder which should be skipped
                 continue;
             }
             let filepath = entry.path().to_str().unwrap();
             debug!("todo: {}", filepath);
+            let extension = Path::new(&filepath).extension().unwrap().to_str().unwrap();
+            // avoid coercing .jpg files into Todo list
+            if !is_valid_extension(&extension) {
+                continue;
+            }
             let todo_raw = match read_to_string(filepath) {
                 Ok(content) => content,
                 Err(error) => panic!(
@@ -178,6 +183,13 @@ fn list_message(
     }
 
     Ok(())
+}
+
+/// Returns true if the file is markdown or in txt format
+fn is_valid_extension(ext: &str) -> bool {
+    let valid_extensions: Vec<&str> = vec!["md", "txt"];
+
+    valid_extensions.contains(&ext)
 }
 
 /// Prints folder location from which Todo lists are being parsed
@@ -636,5 +648,13 @@ mod tests {
             String::from_utf8(stdout.to_vec()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
+    }
+
+    #[test]
+    fn valid_extension() {
+        assert!(is_valid_extension("md"));
+        assert!(is_valid_extension("txt"));
+        assert!(!is_valid_extension(""));
+        assert!(!is_valid_extension("jpg"));
     }
 }
