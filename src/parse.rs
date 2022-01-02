@@ -4,6 +4,7 @@
 //! serialize a Todo list with a crate and expect it to be managed by a human. This module parses also
 //! the configuration file.
 use super::{Configuration, Context};
+use lazy_static::lazy_static;
 use log::{debug, trace};
 use regex::Regex;
 use std::io::Read;
@@ -24,6 +25,12 @@ impl ParsedTodoList {
     pub fn tasks_are_all_done(&self) -> bool {
         self.done == self.total
     }
+}
+
+// Regexes which are used at several places
+lazy_static! {
+    static ref TODO_LIST_RE: Regex =
+        Regex::new("\n## Todo list\n\n(?sm)(?P<list>.*?)(?-m:$|\n##.*)").unwrap();
 }
 
 /// Returns configuration of all Todo contexts and the name of the active context
@@ -117,11 +124,95 @@ pub fn parse_todo_list(todo_raw: &str) -> Result<ParsedTodoList, std::io::Error>
     Ok(todo)
 }
 
+/// Returns tasks description of either completed tasks or open tasks but not
+/// both.
+///
+/// If `complete` and `open` are not mutually exclusive, this function
+/// will return an error.
+pub fn parse_todo_list_tasks(
+    todo_raw: &str,
+    completed: bool,
+    open: bool,
+    short: bool,
+) -> Result<Vec<String>, std::io::Error> {
+    trace!("parse_tasks");
+    if !(completed ^ open) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "complete and open parameters are not mutually exclusive",
+        ));
+    }
+    let mut tasks = vec![];
+    debug!("todo_raw: {:?}", todo_raw);
+    let todo_list = match TODO_LIST_RE.captures(todo_raw) {
+        Some(cap) => cap,
+        None => return Ok(tasks),
+    };
+    let todo_list = todo_list.name("list").unwrap();
+    debug!("todo_list: {:?}", todo_list);
+    lazy_static! {
+        // Note: after 1-2 days, I figured out that the regex crate 1.5.4 does
+        // not offer the required functionality to capture a bullet point in a
+        // markdown file (delimited by '* [ ]' or the end of string). To capture
+        // a section, you need the look-ahead feature of a regex engine (I have
+        // not found a good workaround). Look-ahead does not evaluate in linear
+        // time, which is against what the regex crate wants to offer.
+        // Therefore, you need to import the fancy_regex crate for this type of
+        // regexes (there is two of them).
+        static ref COMPLETED_TASK_FRE: fancy_regex::Regex = fancy_regex::Regex::new(
+            r"(?ms)(?P<summary>^\* \[x\] (?-m).*?)(?=\n\* \[(x|\s)\].*?|$)",
+        )
+        .unwrap();
+        static ref COMPLETED_TASK_SHORT_RE: Regex =
+            Regex::new(r"(?m)^(?P<summary>\* \[x\] .+)$").unwrap();
+        static ref OPEN_TASK_FRE: fancy_regex::Regex = fancy_regex::Regex::new(
+            r"(?ms)(?P<summary>^\* \[ \] (?-m).*?)(?=\n\* \[(x|\s)\].*?|$)",
+        )
+        .unwrap();
+        static ref OPEN_TASK_SHORT_RE: Regex =
+            Regex::new(r"(?m)(?P<summary>^\* \[ \] .+)$").unwrap();
+    }
+
+    if short {
+        let re = match (completed, open) {
+            (true, false) => COMPLETED_TASK_SHORT_RE.clone(),
+            (false, true) => OPEN_TASK_SHORT_RE.clone(),
+            _ => unreachable!(),
+        };
+        // You cannot return static items in a match, hence the
+        // need to copy from them
+        for caps in re.captures_iter(todo_list.as_str()) {
+            debug!("{:?}", caps);
+            let task = caps["summary"].to_string();
+            debug!("task: {}", task);
+            tasks.push(task);
+        }
+    } else {
+        let fre = match (completed, open) {
+            (true, false) => COMPLETED_TASK_FRE.clone(),
+            (false, true) => OPEN_TASK_FRE.clone(),
+            _ => unreachable!(),
+        };
+        // You cannot return static items in a match, hence the
+        // need to copy from them
+        for caps in fre.captures_iter(todo_list.as_str()) {
+            debug!("{:?}", caps);
+            let task = caps.unwrap()["summary"].to_string();
+            debug!("task: {}", task);
+            tasks.push(task);
+        }
+    }
+
+    Ok(tasks)
+}
+
 /// Returns title from Todo list
 fn parse_todo_list_title(todo_raw: &str) -> Option<String> {
-    let title_reg: Regex = Regex::new(r"^# (.+)\n").unwrap();
+    lazy_static! {
+        static ref TITLE_RE: Regex = Regex::new(r"^# (.+)\n").unwrap();
+    }
     debug!("todo_raw: {}", todo_raw);
-    match title_reg.captures(todo_raw) {
+    match TITLE_RE.captures(todo_raw) {
         None => None,
         Some(caps) => {
             debug!("caps len: {}", caps.len());
@@ -138,38 +229,35 @@ fn parse_todo_list_title(todo_raw: &str) -> Option<String> {
 /// Returns the detailed informations about the task list of given Todo list. Tasks can be spread throughout the
 /// file.
 fn parse_todo_list_tasks_status(todo_raw: &str) -> (usize, usize) {
-    trace!("parse_remaining_tasks");
-    debug!("todo_raw: {:?}", todo_raw);
-    let todo_list_reg: Regex = Regex::new(r"(?s)\n\n## Todo list\n\n(.*)").unwrap();
-    let todo_list = todo_list_reg.captures(todo_raw);
-    debug!("todo_list: {:?}", todo_list);
-    match todo_list {
-        None => (0, 0),
-        Some(caps) => {
-            if caps.len() == 1 {
-                (0, 0)
-            } else {
-                debug!("caps: {:?}", caps);
-                let done_reg: Regex = Regex::new(r"(?m)^\* \[(.{1})\] .+$").unwrap();
-                let mut done = 0;
-                let todo_list = &caps[1];
-                let matches = done_reg.find_iter(todo_list);
-                let total = matches.count();
-                for mat in done_reg.find_iter(todo_list) {
-                    if mat.as_str().get(0..6).unwrap().eq("* [x] ") {
-                        done = done + 1;
-                    }
-                }
-                (done, total)
-            }
+    trace!("parse_todo_list_tasks_status");
+    debug!("todo_raw:\t{:?}", todo_raw);
+    let todo_list = match TODO_LIST_RE.captures(todo_raw) {
+        Some(cap) => cap,
+        None => return (0, 0),
+    };
+    trace!("Captured some todo list");
+    let todo_list = todo_list.name("list").unwrap();
+    debug!("todo_list:\t{:?}", todo_list);
+    lazy_static! {
+        static ref DONE_RE: Regex = Regex::new(r"(?m)^\* \[(.{1})\] .+$").unwrap();
+    }
+    let mut done = 0;
+    let matches = DONE_RE.find_iter(todo_list.as_str());
+    let total = matches.count();
+    for mat in DONE_RE.find_iter(todo_list.as_str()) {
+        if mat.as_str().get(0..6).unwrap().eq("* [x] ") {
+            done = done + 1;
         }
     }
+    (done, total)
 }
 
 /// Returns labels of Todo list
 fn parse_todo_list_labels(todo_raw: &str) -> Result<Vec<String>, std::io::Error> {
-    let label_re: Regex = Regex::new(r"## Description\n\nLABEL=(.*)").unwrap();
-    let label_matches = label_re.captures(todo_raw).unwrap();
+    lazy_static! {
+        static ref LABEL_RE: Regex = Regex::new(r"## Description\n\nLABEL=(.*)").unwrap();
+    }
+    let label_matches = LABEL_RE.captures(todo_raw).unwrap();
     debug!("label_matches: {:?}", label_matches);
     if label_matches.len() == 1 {
         eprintln!("Error while parsing labels");
@@ -484,5 +572,222 @@ Confusing description
         assert_eq!(5, total);
 
         assert!(parse_todo_list(todo_raw).unwrap().tasks_are_all_done());
+
+        let todo_raw = "\
+# Title
+
+## Description
+
+LABEL=
+
+## Description 
+
+Confusing description
+
+* [x] confusing point
+
+## Todo list
+
+* [x] idk man
+* [x] idk man
+* [x] idk man
+* [x] idk man
+* [x] idk man
+
+## Some other section
+
+* [x] this should not be counted
+";
+        let (done, total) = parse_todo_list_tasks_status(todo_raw);
+        assert_eq!(5, done);
+        assert_eq!(5, total);
+
+        assert!(parse_todo_list(todo_raw).unwrap().tasks_are_all_done());
+    }
+
+    #[test]
+    fn parse_todo_list_tasks_has_mutually_exclusive_arguments() {
+        init();
+        // although the code uses a xor operator (`^`), it is still worth to
+        // make sure this behavior is checked in CI
+        let todo_raw = "";
+        let completed = true;
+        let open = true;
+        let short = true;
+        assert!(parse_todo_list_tasks(&todo_raw, completed, open, short).is_err());
+        let completed = true;
+        let open = true;
+        let short = false; // testing if short modifies this behavior
+        assert!(parse_todo_list_tasks(&todo_raw, completed, open, short).is_err());
+        let completed = false;
+        let open = true;
+        let short = false;
+        assert!(parse_todo_list_tasks(&todo_raw, completed, open, short).is_ok());
+        let completed = true;
+        let open = false;
+        let short = false;
+        assert!(parse_todo_list_tasks(&todo_raw, completed, open, short).is_ok());
+        let completed = false;
+        let open = false;
+        let short = false;
+        assert!(parse_todo_list_tasks(&todo_raw, completed, open, short).is_err());
+    }
+
+    #[test]
+    fn parse_todo_list_completed_tasks_short_description() {
+        init();
+        let todo_raw = "\
+# Title
+
+## Description
+
+LABEL=
+
+## Description 
+
+Confusing description
+
+* [x] confusing point
+
+## Todo list
+
+* [x] completed1
+* [x] completed2
+* [ ] open1
+* [x] completed3 long description
+this line should not be caught
+* [x] completed4 long description
+this line should not be caught either
+
+";
+        let completed = true;
+        let open = false;
+        let short = true;
+        let tasks = parse_todo_list_tasks(todo_raw, completed, open, short).unwrap();
+        let expected: Vec<String> = vec![
+            String::from("* [x] completed1"),
+            String::from("* [x] completed2"),
+            String::from("* [x] completed3 long description"),
+            String::from("* [x] completed4 long description"),
+        ];
+        assert_eq!(tasks, expected);
+    }
+
+    #[test]
+    fn parse_todo_list_open_tasks_short_description() {
+        init();
+        let todo_raw = "\
+# Title
+
+## Description
+
+LABEL=
+
+## Description 
+
+Confusing description
+
+* [x] confusing point
+
+## Todo list
+
+* [ ] open1
+* [x] completed1
+* [x] completed2
+* [ ] open2 long description
+this line should not be caught
+* [ ] open3 long description
+this line should not be caught either
+
+";
+        let completed = false;
+        let open = true;
+        let short = true;
+        let tasks = parse_todo_list_tasks(todo_raw, completed, open, short).unwrap();
+        let expected: Vec<String> = vec![
+            String::from("* [ ] open1"),
+            String::from("* [ ] open2 long description"),
+            String::from("* [ ] open3 long description"),
+        ];
+        assert_eq!(tasks, expected);
+    }
+
+    #[test]
+    fn parse_todo_list_completed_tasks_description() {
+        init();
+        let todo_raw = "\
+# Title
+
+## Description
+
+LABEL=
+
+## Description 
+
+Confusing description
+
+* [x] confusing point
+
+## Todo list
+
+* [x] completed1
+* [x] completed2
+* [ ] open1
+* [x] completed3 long description
+this line should be caught
+* [x] completed4 long description
+this line should also be caught
+
+";
+        let completed = true;
+        let open = false;
+        let short = false;
+        let tasks = parse_todo_list_tasks(todo_raw, completed, open, short).unwrap();
+        let expected: Vec<String> = vec![
+            String::from("* [x] completed1"),
+            String::from("* [x] completed2"),
+            String::from("* [x] completed3 long description\nthis line should be caught"),
+            String::from("* [x] completed4 long description\nthis line should also be caught\n\n"),
+        ];
+        assert_eq!(tasks, expected);
+    }
+
+    #[test]
+    fn parse_todo_list_open_tasks_description() {
+        init();
+        let todo_raw = "\
+# Title
+
+## Description
+
+LABEL=
+
+## Description 
+
+Confusing description
+
+* [x] confusing point
+
+## Todo list
+
+* [ ] open1
+* [x] completed1
+* [x] completed2
+* [ ] open2 long description
+this line should be caught
+* [ ] open3 long description
+this line should also be caught
+
+";
+        let completed = false;
+        let open = true;
+        let short = false;
+        let tasks = parse_todo_list_tasks(todo_raw, completed, open, short).unwrap();
+        let expected: Vec<String> = vec![
+            String::from("* [ ] open1"),
+            String::from("* [ ] open2 long description\nthis line should be caught"),
+            String::from("* [ ] open3 long description\nthis line should also be caught\n\n"),
+        ];
+        assert_eq!(tasks, expected);
     }
 }
