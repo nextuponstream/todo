@@ -24,7 +24,6 @@ pub fn get_contexts_command_process(
 ) -> Result<(), std::io::Error> {
     trace!("get-contexts");
     let config = parse_configuration_file(Some(todo_configuration_path), raw_config)?;
-    // TODO https://github.com/nextuponstream/todo/issues/4
     let full = args.is_present("full");
     debug!("args: {:?}", args);
     debug!("full: {}", full);

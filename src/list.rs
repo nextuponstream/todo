@@ -1,6 +1,6 @@
 //! List all Todo lists in active Todo context
 use crate::{
-    parse::{parse_todo_list, ParsedTodoList},
+    parse::{parse_todo_list, parse_todo_list_tasks},
     Configuration, Context,
 };
 use clap::{crate_authors, App, Arg, ArgMatches};
@@ -46,6 +46,21 @@ pub fn list_command() -> App<'static, 'static> {
                 .long("global")
                 .help("Lists Todo lists from all contexts"),
         )
+        .arg(
+            Arg::with_name("completed-tasks")
+                .short("c")
+                .long("completed-tasks")
+                .help(
+                    "Shows only completed tasks in the lists (default shows the entire task list)",
+                ),
+        )
+        .arg(
+            Arg::with_name("open-tasks")
+                .short("o")
+                .long("open-tasks")
+                .conflicts_with("completed-tasks")
+                .help("Shows only open tasks in the lists (default shows the entire task list)"),
+        )
 }
 
 /// Lists Todo lists from Todo context while filtering by label and whether or not the task list is
@@ -66,6 +81,8 @@ pub fn list_command_process(
     let all = args.is_present("all");
     let done = args.is_present("done");
     let global = args.is_present("global");
+    let completed = args.is_present("completed-tasks");
+    let open = args.is_present("open-tasks");
 
     list_message(
         &mut std::io::stdout(),
@@ -75,20 +92,9 @@ pub fn list_command_process(
         all,
         done,
         global,
+        completed,
+        open,
         None,
-    )
-}
-
-/// Prints a short one-line summary of Todo list
-fn todo_list_short_view(
-    stdout: &mut dyn std::io::Write,
-    todo_list: &ParsedTodoList,
-) -> Result<(), std::io::Error> {
-    trace!("todo_list_short_view");
-    writeln!(
-        stdout,
-        "{}/{}\t- {}",
-        todo_list.done, todo_list.total, todo_list.title
     )
 }
 
@@ -111,9 +117,12 @@ fn list_message(
     all: bool,
     done: bool,
     global: bool,
+    completed: bool,
+    open: bool,
     entries: Option<Vec<Vec<&str>>>,
 ) -> Result<(), std::io::Error> {
     debug!("short: {}", short);
+    assert!(!(completed && open));
 
     if !config.is_valid() {
         return Err(std::io::Error::new(
@@ -123,7 +132,7 @@ fn list_message(
     }
 
     if entries.is_some() {
-        let entries = entries.unwrap();
+        let mut entries = entries.unwrap();
         assert_eq!(
             entries.len(),
             config.ctxs.len(),
@@ -131,12 +140,18 @@ fn list_message(
         );
         let mut ctxs = config.ctxs.clone();
         ctxs.reverse();
+        entries.reverse();
 
-        for directory in entries {
-            let ctx = ctxs.pop().unwrap();
+        for ctx in config.ctxs.clone() {
+            if !global && ctx.name != config.active_ctx_name {
+                continue;
+            }
+
             print_todo_folder_location(stdout, &ctx)?;
+            let directory = entries.pop().unwrap();
+            debug!("directory: {}\n- files:\n{:?}", ctx.name, directory);
             for todo_raw in directory {
-                print_todo(stdout, todo_raw, &labels, all, done, short)?;
+                print_todo(stdout, todo_raw, &labels, all, done, short, completed, open)?;
             }
         }
 
@@ -178,7 +193,16 @@ fn list_message(
                 ),
             };
 
-            print_todo(stdout, todo_raw.as_str(), &labels, all, done, short)?;
+            print_todo(
+                stdout,
+                todo_raw.as_str(),
+                &labels,
+                all,
+                done,
+                short,
+                completed,
+                open,
+            )?;
         }
     }
 
@@ -204,7 +228,18 @@ fn print_todo_folder_location(
     writeln!(stdout, "Todo lists from {}", ctx.folder_location)
 }
 
-/// Prints out a Todo list
+/// Prints out a Todo list. By default, only Todo lists with open tasks will be
+/// printed out.
+///
+/// * `stdout` - The output be printed to (usually stdout)
+/// * `todo_raw` - The content of the Todo list in plain text
+/// * `labels` - The set of label the Todo list must have for it to be printed
+/// * `all` - Condition to print Todo list even when it has no open tasks
+/// * `done` - Condition to print only Todo list with no open tasks
+/// * `short` - Print a short summary of Todo list which indicates the number of
+/// task done and the total number of tasks in the list
+/// * `completed` - Print the summary of the completed tasks in the list
+/// * `open` - Print the summary of the open tasks in the list
 fn print_todo(
     stdout: &mut dyn std::io::Write,
     todo_raw: &str,
@@ -212,6 +247,8 @@ fn print_todo(
     all: bool,
     done: bool,
     short: bool,
+    completed: bool,
+    open: bool,
 ) -> Result<(), std::io::Error> {
     trace!("print_todo");
     let todo_list = parse_todo_list(&todo_raw).unwrap();
@@ -236,13 +273,27 @@ fn print_todo(
             trace!("skipped");
             return Ok(());
         }
-        if short {
-            todo_list_short_view(stdout, &todo_list)?;
+        if completed ^ open {
+            writeln!(stdout, "# {}", todo_list.title)?;
+            let tasks = parse_todo_list_tasks(todo_raw, completed, open, short).unwrap();
+            for task in tasks {
+                // trim_end avoid cluttering the output with all whitespace the
+                // user might have used to make his Todo list more readable or
+                // the accidental trailing spaces he might have left
+                writeln!(stdout, "{}", task.as_str().trim_end())?;
+            }
         } else {
-            writeln!(stdout, "{}", todo_raw)?;
+            if short {
+                writeln!(
+                    stdout,
+                    "{}/{}\t- {}",
+                    todo_list.done, todo_list.total, todo_list.title
+                )?;
+            } else {
+                writeln!(stdout, "{}", todo_raw)?;
+            }
         }
     }
-
     Ok(())
 }
 
@@ -255,7 +306,7 @@ mod tests {
     // https://github.com/rust-lang/rfcs/issues/1664
     fn init() {
         let _ = TermLogger::init(
-            LevelFilter::Warn,
+            LevelFilter::Trace,
             Config::default(),
             TerminalMode::Mixed,
             ColorChoice::Auto,
@@ -284,6 +335,8 @@ mod tests {
         let all = false;
         let done = false;
         let global = false;
+        let completed = false;
+        let open = false;
         let entries = vec![];
         assert!(list_message(
             &mut stdout,
@@ -293,6 +346,8 @@ mod tests {
             all,
             done,
             global,
+            completed,
+            open,
             Some(entries),
         )
         .is_err());
@@ -315,6 +370,8 @@ mod tests {
         let all = false;
         let done = false;
         let global = false;
+        let completed = false;
+        let open = false;
         let entries = vec![vec![]];
 
         assert!(list_message(
@@ -325,6 +382,8 @@ mod tests {
             all,
             done,
             global,
+            completed,
+            open,
             Some(entries),
         )
         .is_ok());
@@ -355,6 +414,8 @@ mod tests {
         let all = false;
         let done = false;
         let global = false;
+        let completed = false;
+        let open = false;
         let entries = vec![vec![
             "# title1\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [ ] first",
             "# title2\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [x] first",
@@ -368,6 +429,8 @@ mod tests {
             all,
             done,
             global,
+            completed,
+            open,
             Some(entries),
         )
         .is_ok());
@@ -395,6 +458,8 @@ mod tests {
         let all = false;
         let done = true;
         let global = false;
+        let completed = false;
+        let open = false;
         let entries = vec![vec![
             "# title1\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [ ] first",
             "# title2\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [x] first",
@@ -408,6 +473,8 @@ mod tests {
             all,
             done,
             global,
+            completed,
+            open,
             Some(entries),
         )
         .is_ok());
@@ -435,6 +502,8 @@ mod tests {
         let all = true;
         let done = false;
         let global = false;
+        let completed = false;
+        let open = false;
         let entries = vec![vec![
             "# title1\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [ ] first",
             "# title2\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [x] first",
@@ -448,6 +517,8 @@ mod tests {
             all,
             done,
             global,
+            completed,
+            open,
             Some(entries),
         )
         .is_ok());
@@ -475,6 +546,8 @@ mod tests {
         let all = true;
         let done = false;
         let global = false;
+        let completed = false;
+        let open = false;
         let entries = vec![vec![
             "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] first",
             "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] first",
@@ -488,6 +561,8 @@ mod tests {
             all,
             done,
             global,
+            completed,
+            open,
             Some(entries),
         )
         .is_ok());
@@ -514,6 +589,8 @@ mod tests {
         let all = true;
         let done = false;
         let global = false;
+        let completed = false;
+        let open = false;
         let entries = vec![vec![
             "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] first",
             "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] first",
@@ -527,6 +604,8 @@ mod tests {
             all,
             done,
             global,
+            completed,
+            open,
             Some(entries),
         )
         .is_ok());
@@ -565,6 +644,8 @@ mod tests {
         let all = true;
         let done = false;
         let global = true;
+        let completed = false;
+        let open = false;
         let entries = vec![
             vec![
                 "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] first",
@@ -584,6 +665,8 @@ mod tests {
             all,
             done,
             global,
+            completed,
+            open,
             Some(entries),
         )
         .is_ok());
@@ -618,6 +701,8 @@ mod tests {
         let all = true;
         let done = false;
         let global = true;
+        let completed = false;
+        let open = false;
         let entries = vec![
             vec![
                 "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] first",
@@ -637,6 +722,8 @@ mod tests {
             all,
             done,
             global,
+            completed,
+            open,
             Some(entries),
         )
         .is_ok());
@@ -656,5 +743,245 @@ mod tests {
         assert!(is_valid_extension("txt"));
         assert!(!is_valid_extension(""));
         assert!(!is_valid_extension("jpg"));
+    }
+
+    #[test]
+    fn list_open_tasks() {
+        init();
+        // TODO implement test
+        let mut stdout = vec![];
+        let config = Configuration {
+            active_ctx_name: String::from("ctx1"),
+            ctxs: vec![
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx1"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder1"),
+                },
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx2"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder2"),
+                },
+            ],
+        };
+        let labels: Vec<&str> = vec!["l1"];
+        let all = false;
+        let done = false;
+        let global = false;
+        let completed = false;
+        let open = true;
+        let entries = vec![
+            vec![
+                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+            vec![
+                "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+        ];
+
+        assert!(list_message(
+            &mut stdout,
+            &config,
+            labels,
+            SHORT,
+            all,
+            done,
+            global,
+            completed,
+            open,
+            Some(entries),
+        )
+        .is_ok());
+        let expected = b"Todo lists from fake/folder1\n# title1\n* [ ] open1\n* [ ] open2\n";
+        assert_eq!(
+            stdout,
+            expected,
+            "\ngot     : \"{}\"\nexpected: \"{}\"",
+            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(expected.to_vec()).unwrap()
+        );
+
+        let mut stdout = vec![];
+        let config = Configuration {
+            active_ctx_name: String::from("ctx1"),
+            ctxs: vec![
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx1"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder1"),
+                },
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx2"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder2"),
+                },
+            ],
+        };
+        let labels: Vec<&str> = vec!["l2"];
+        let all = false;
+        let done = false;
+        let global = false;
+        let completed = false;
+        let open = true;
+        let entries = vec![
+            vec![
+                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+            vec![
+                "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+        ];
+
+        assert!(list_message(
+            &mut stdout,
+            &config,
+            labels,
+            SHORT,
+            all,
+            done,
+            global,
+            completed,
+            open,
+            Some(entries),
+        )
+        .is_ok());
+        let expected = b"Todo lists from fake/folder1\n# title2\n* [ ] open1\n* [ ] open2\n";
+        assert_eq!(
+            stdout,
+            expected,
+            "\ngot     : \"{}\"\nexpected: \"{}\"",
+            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(expected.to_vec()).unwrap()
+        );
+    }
+
+    #[test]
+    fn list_completed_tasks() {
+        init();
+        // TODO implement test
+        let mut stdout = vec![];
+        let config = Configuration {
+            active_ctx_name: String::from("ctx1"),
+            ctxs: vec![
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx1"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder1"),
+                },
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx2"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder2"),
+                },
+            ],
+        };
+        let labels: Vec<&str> = vec!["l1"];
+        let all = false;
+        let done = false;
+        let global = false;
+        let completed = true;
+        let open = false;
+        let entries = vec![
+            vec![
+                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+            vec![
+                "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+        ];
+
+        assert!(list_message(
+            &mut stdout,
+            &config,
+            labels,
+            SHORT,
+            all,
+            done,
+            global,
+            completed,
+            open,
+            Some(entries),
+        )
+        .is_ok());
+        let expected =
+            b"Todo lists from fake/folder1\n# title1\n* [x] completed1\n* [x] completed2\n";
+        assert_eq!(
+            stdout,
+            expected,
+            "\ngot     : \"{}\"\nexpected: \"{}\"",
+            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(expected.to_vec()).unwrap()
+        );
+
+        let mut stdout = vec![];
+        let config = Configuration {
+            active_ctx_name: String::from("ctx1"),
+            ctxs: vec![
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx1"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder1"),
+                },
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx2"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder2"),
+                },
+            ],
+        };
+        let labels: Vec<&str> = vec!["l2"];
+        let all = false;
+        let done = false;
+        let global = false;
+        let completed = true;
+        let open = false;
+        let entries = vec![
+            vec![
+                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+            vec![
+                "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+        ];
+
+        assert!(list_message(
+            &mut stdout,
+            &config,
+            labels,
+            SHORT,
+            all,
+            done,
+            global,
+            completed,
+            open,
+            Some(entries),
+        )
+        .is_ok());
+        let expected =
+            b"Todo lists from fake/folder1\n# title2\n* [x] completed1\n* [x] completed2\n";
+        assert_eq!(
+            stdout,
+            expected,
+            "\ngot     : \"{}\"\nexpected: \"{}\"",
+            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(expected.to_vec()).unwrap()
+        );
     }
 }
