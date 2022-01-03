@@ -61,6 +61,14 @@ pub fn list_command() -> App<'static, 'static> {
                 .conflicts_with("completed-tasks")
                 .help("Shows only open tasks in the lists (default shows the entire task list)"),
         )
+        .arg(
+            Arg::with_name("task-lists")
+                .short("t")
+                .long("task-lists")
+                .help("Show only specified task lists.")
+                .takes_value(true)
+                .multiple(true),
+        )
 }
 
 /// Lists Todo lists from Todo context while filtering by label and whether or not the task list is
@@ -83,7 +91,10 @@ pub fn list_command_process(
     let global = args.is_present("global");
     let completed = args.is_present("completed-tasks");
     let open = args.is_present("open-tasks");
-
+    let task_lists: Option<Vec<&str>> = match args.values_of("task-lists") {
+        Some(tls) => Some(tls.collect::<Vec<_>>()),
+        None => None,
+    };
     list_message(
         &mut std::io::stdout(),
         &config,
@@ -95,6 +106,7 @@ pub fn list_command_process(
         completed,
         open,
         None,
+        task_lists,
     )
 }
 
@@ -109,6 +121,7 @@ pub fn list_command_process(
 /// * `done` - filter Todo lists with all tasks done
 /// * `global` - disable filtering by Todo context
 /// * `entries` - when provided, don't use Todo list file entries at Todo context folder location
+/// * `task_lists` - when provided, show only specified task lists
 fn list_message(
     stdout: &mut dyn std::io::Write,
     config: &Configuration,
@@ -120,6 +133,7 @@ fn list_message(
     completed: bool,
     open: bool,
     entries: Option<Vec<Vec<&str>>>,
+    task_lists: Option<Vec<&str>>,
 ) -> Result<(), std::io::Error> {
     debug!("short: {}", short);
     assert!(!(completed && open));
@@ -130,6 +144,8 @@ fn list_message(
             "Bad configuration file",
         ));
     }
+
+    let task_lists = task_lists.unwrap_or(vec![]);
 
     if entries.is_some() {
         let mut entries = entries.unwrap();
@@ -143,15 +159,18 @@ fn list_message(
         entries.reverse();
 
         for ctx in config.ctxs.clone() {
+            let directory = entries.pop().unwrap();
             if !global && ctx.name != config.active_ctx_name {
                 continue;
             }
 
             print_todo_folder_location(stdout, &ctx)?;
-            let directory = entries.pop().unwrap();
             debug!("directory: {}\n- files:\n{:?}", ctx.name, directory);
             for todo_raw in directory {
-                print_todo(stdout, todo_raw, &labels, all, done, short, completed, open)?;
+                let todo_list = parse_todo_list(todo_raw).unwrap();
+                if task_lists.is_empty() || task_lists.contains(&todo_list.title.as_str()) {
+                    print_todo(stdout, todo_raw, &labels, all, done, short, completed, open)?;
+                }
             }
         }
 
@@ -193,16 +212,22 @@ fn list_message(
                 ),
             };
 
-            print_todo(
-                stdout,
-                todo_raw.as_str(),
-                &labels,
-                all,
-                done,
-                short,
-                completed,
-                open,
-            )?;
+            // Note: one could form directly the path to the file and directly
+            // check if it exists or not to avoid iterating through all the
+            // files in the context.
+            let todo_list = parse_todo_list(todo_raw.as_str()).unwrap();
+            if task_lists.is_empty() || task_lists.contains(&todo_list.title.as_str()) {
+                print_todo(
+                    stdout,
+                    todo_raw.as_str(),
+                    &labels,
+                    all,
+                    done,
+                    short,
+                    completed,
+                    open,
+                )?;
+            }
         }
     }
 
@@ -349,6 +374,7 @@ mod tests {
             completed,
             open,
             Some(entries),
+            None,
         )
         .is_err());
     }
@@ -385,6 +411,7 @@ mod tests {
             completed,
             open,
             Some(entries),
+            None,
         )
         .is_ok());
         let expected = b"Todo lists from fake/folder\n";
@@ -432,6 +459,7 @@ mod tests {
             completed,
             open,
             Some(entries),
+            None,
         )
         .is_ok());
         let expected = b"Todo lists from fake/folder\n0/1\t- title1\n";
@@ -476,6 +504,7 @@ mod tests {
             completed,
             open,
             Some(entries),
+            None,
         )
         .is_ok());
         let expected = b"Todo lists from fake/folder\n1/1\t- title2\n";
@@ -520,6 +549,7 @@ mod tests {
             completed,
             open,
             Some(entries),
+            None,
         )
         .is_ok());
         let expected = b"Todo lists from fake/folder\n0/1\t- title1\n1/1\t- title2\n";
@@ -564,6 +594,7 @@ mod tests {
             completed,
             open,
             Some(entries),
+            None,
         )
         .is_ok());
         let expected = b"Todo lists from fake/folder\n1/1\t- title2\n";
@@ -607,6 +638,7 @@ mod tests {
             completed,
             open,
             Some(entries),
+            None,
         )
         .is_ok());
         let expected = b"Todo lists from fake/folder\n0/1\t- title1\n";
@@ -668,6 +700,7 @@ mod tests {
             completed,
             open,
             Some(entries),
+            None,
         )
         .is_ok());
         let expected = b"Todo lists from fake/folder1\n0/1\t- title1\nTodo lists from fake/folder2\n1/1\t- title3\n";
@@ -725,6 +758,7 @@ mod tests {
             completed,
             open,
             Some(entries),
+            None,
         )
         .is_ok());
         let expected = b"Todo lists from fake/folder1\n1/1\t- title2\nTodo lists from fake/folder2\n0/1\t- title4\n";
@@ -748,7 +782,6 @@ mod tests {
     #[test]
     fn list_open_tasks() {
         init();
-        // TODO implement test
         let mut stdout = vec![];
         let config = Configuration {
             active_ctx_name: String::from("ctx1"),
@@ -795,6 +828,7 @@ mod tests {
             completed,
             open,
             Some(entries),
+            None,
         )
         .is_ok());
         let expected = b"Todo lists from fake/folder1\n# title1\n* [ ] open1\n* [ ] open2\n";
@@ -852,6 +886,7 @@ mod tests {
             completed,
             open,
             Some(entries),
+            None,
         )
         .is_ok());
         let expected = b"Todo lists from fake/folder1\n# title2\n* [ ] open1\n* [ ] open2\n";
@@ -867,7 +902,6 @@ mod tests {
     #[test]
     fn list_completed_tasks() {
         init();
-        // TODO implement test
         let mut stdout = vec![];
         let config = Configuration {
             active_ctx_name: String::from("ctx1"),
@@ -914,6 +948,7 @@ mod tests {
             completed,
             open,
             Some(entries),
+            None,
         )
         .is_ok());
         let expected =
@@ -972,10 +1007,138 @@ mod tests {
             completed,
             open,
             Some(entries),
+            None,
         )
         .is_ok());
         let expected =
             b"Todo lists from fake/folder1\n# title2\n* [x] completed1\n* [x] completed2\n";
+        assert_eq!(
+            stdout,
+            expected,
+            "\ngot     : \"{}\"\nexpected: \"{}\"",
+            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(expected.to_vec()).unwrap()
+        );
+    }
+
+    #[test]
+    fn show_one_task_list() {
+        init();
+        let mut stdout = vec![];
+        let config = Configuration {
+            active_ctx_name: String::from("ctx2"),
+            ctxs: vec![
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx1"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder1"),
+                },
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx2"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder2"),
+                },
+            ],
+        };
+        let labels: Vec<&str> = vec![];
+        let all = false;
+        let done = false;
+        let global = false;
+        let completed = false;
+        let open = true;
+        let entries = vec![
+            vec![
+                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+            vec![
+                "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+        ];
+        let task_lists = vec!["title3"];
+
+        assert!(list_message(
+            &mut stdout,
+            &config,
+            labels,
+            SHORT,
+            all,
+            done,
+            global,
+            completed,
+            open,
+            Some(entries),
+            Some(task_lists),
+        )
+        .is_ok());
+        let expected = b"Todo lists from fake/folder2\n# title3\n* [ ] open1\n* [ ] open2\n";
+        assert_eq!(
+            stdout,
+            expected,
+            "\ngot     : \"{}\"\nexpected: \"{}\"",
+            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(expected.to_vec()).unwrap()
+        );
+    }
+
+    #[test]
+    fn show_many_task_lists() {
+        init();
+        let mut stdout = vec![];
+        let config = Configuration {
+            active_ctx_name: String::from("ctx2"),
+            ctxs: vec![
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx1"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder1"),
+                },
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx2"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder2"),
+                },
+            ],
+        };
+        let labels: Vec<&str> = vec![];
+        let all = false;
+        let done = false;
+        let global = false;
+        let completed = false;
+        let open = true;
+        let entries = vec![
+            vec![
+                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+            vec![
+                "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+                "# title5\n\n## Description\n\nLABEL=l3\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2\n* [ ] open3",
+            ],
+        ];
+        let task_lists = vec!["title3", "title5"];
+
+        assert!(list_message(
+            &mut stdout,
+            &config,
+            labels,
+            SHORT,
+            all,
+            done,
+            global,
+            completed,
+            open,
+            Some(entries),
+            Some(task_lists),
+        )
+        .is_ok());
+        let expected = b"Todo lists from fake/folder2\n# title3\n* [ ] open1\n* [ ] open2\n# title5\n* [ ] open1\n* [ ] open2\n* [ ] open3\n";
         assert_eq!(
             stdout,
             expected,
