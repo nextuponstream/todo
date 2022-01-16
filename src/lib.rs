@@ -69,6 +69,13 @@ impl fmt::Display for Configuration {
 }
 
 impl Configuration {
+    pub fn new() -> Configuration {
+        Configuration {
+            active_ctx_name: "".to_string(),
+            ctxs: vec![],
+        }
+    }
+
     /// Updates active context in configuration
     ///
     /// The active context is updated when the given name matches the one of the context inside the configuration.
