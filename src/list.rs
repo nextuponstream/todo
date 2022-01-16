@@ -8,6 +8,38 @@ use log::{debug, trace};
 use std::{fs::read_to_string, path::Path};
 use walkdir::WalkDir;
 
+/// The list of parameters for the `todo list` subcommand
+//
+// This struct is introduced to avoid development pain where adding a new
+// parameter forces the developer to update 30+ test cases with 30 default
+// values, which also look messy when doing a `git diff HEAD~1` (30 lines
+// updated which don't change much). With the help of the `new()` command, you
+// initialize default values and then set the values you need, avoiding a lot of
+// boilerplate initialization.
+//
+// NOTE: This struct does not inclue the byte stream output (stdout or Vec<u8>)
+// because trying to put a mutable shared reference to std::io::stdout() is a
+// real pain that can be avoided (I don't know enough about lifetimes and the
+// various advanced types of Rust to make it work). Besides, I see very few
+// reasons why the list argument would need more shared mutable references so
+// it's ok if the list_command_process function only has two arguments.
+//
+// The reason to preserve this reference to either stdout or a Vec<u8> is that
+// during tests, you need to check the correctness of what is printed out
+// (the Vec<u8> substituting as stdout).
+pub struct Parameters<'a> {
+    pub all: bool,
+    pub completed: bool,
+    pub config: Configuration,
+    pub done: bool,
+    entries: Option<Vec<Vec<&'a str>>>,
+    pub global: bool,
+    pub labels: Vec<&'a str>,
+    pub open: bool,
+    pub short: bool,
+    pub task_lists: Option<Vec<&'a str>>,
+}
+
 /// Returns Todo list command
 pub fn list_command() -> App<'static, 'static> {
     App::new("list")
@@ -67,7 +99,8 @@ pub fn list_command() -> App<'static, 'static> {
                 .long("task-lists")
                 .help("Show only specified task lists.")
                 .takes_value(true)
-                .multiple(true),
+                .multiple(true)
+                .index(1),
         )
 }
 
@@ -77,37 +110,26 @@ pub fn list_command_process(
     args: &ArgMatches,
     config: &Configuration,
 ) -> Result<(), std::io::Error> {
-    trace!("list subcommand");
-
-    let labels = args
-        .values_of("label")
-        .unwrap_or_default()
-        .collect::<Vec<_>>();
-    debug!("labels = {:?}", labels);
-    debug!("short: {}", args.is_present("short"));
-    let short = args.is_present("short");
-    let all = args.is_present("all");
-    let done = args.is_present("done");
-    let global = args.is_present("global");
-    let completed = args.is_present("completed-tasks");
-    let open = args.is_present("open-tasks");
-    let task_lists: Option<Vec<&str>> = match args.values_of("task-lists") {
-        Some(tls) => Some(tls.collect::<Vec<_>>()),
-        None => None,
+    let parameters = Parameters {
+        all: args.is_present("all"),
+        completed: args.is_present("completed-tasks"),
+        config: config.to_owned(),
+        done: args.is_present("done"),
+        entries: None,
+        global: args.is_present("global"),
+        labels: args
+            .values_of("label")
+            .unwrap_or_default()
+            .collect::<Vec<_>>(),
+        open: args.is_present("open-tasks"),
+        short: args.is_present("short"),
+        task_lists: match args.values_of("task-lists") {
+            Some(tls) => Some(tls.collect::<Vec<_>>()),
+            None => None,
+        },
     };
-    list_message(
-        &mut std::io::stdout(),
-        &config,
-        labels,
-        short,
-        all,
-        done,
-        global,
-        completed,
-        open,
-        None,
-        task_lists,
-    )
+
+    list_message(&mut std::io::stdout(), parameters)
 }
 
 /// Returns message when `todo list` command is invoked
@@ -122,45 +144,33 @@ pub fn list_command_process(
 /// * `global` - disable filtering by Todo context
 /// * `entries` - when provided, don't use Todo list file entries at Todo context folder location
 /// * `task_lists` - when provided, show only specified task lists
-fn list_message(
-    stdout: &mut dyn std::io::Write,
-    config: &Configuration,
-    labels: Vec<&str>,
-    short: bool,
-    all: bool,
-    done: bool,
-    global: bool,
-    completed: bool,
-    open: bool,
-    entries: Option<Vec<Vec<&str>>>,
-    task_lists: Option<Vec<&str>>,
-) -> Result<(), std::io::Error> {
-    debug!("short: {}", short);
-    assert!(!(completed && open));
+fn list_message(stdout: &mut dyn std::io::Write, p: Parameters) -> Result<(), std::io::Error> {
+    debug!("short: {}", p.short);
+    assert!(!(p.completed && p.open));
 
-    if !config.is_valid() {
+    if !p.config.is_valid() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
             "Bad configuration file",
         ));
     }
 
-    let task_lists = task_lists.unwrap_or(vec![]);
+    let task_lists = p.task_lists.unwrap_or(vec![]);
 
-    if entries.is_some() {
-        let mut entries = entries.unwrap();
+    if p.entries.is_some() {
+        let mut entries = p.entries.unwrap();
         assert_eq!(
             entries.len(),
-            config.ctxs.len(),
+            p.config.ctxs.len(),
             "entries and configuration contexts number do not match"
         );
-        let mut ctxs = config.ctxs.clone();
+        let mut ctxs = p.config.ctxs.clone();
         ctxs.reverse();
         entries.reverse();
 
-        for ctx in config.ctxs.clone() {
+        for ctx in p.config.ctxs.clone() {
             let directory = entries.pop().unwrap();
-            if !global && ctx.name != config.active_ctx_name {
+            if !p.global && ctx.name != p.config.active_ctx_name {
                 continue;
             }
 
@@ -169,7 +179,16 @@ fn list_message(
             for todo_raw in directory {
                 let todo_list = parse_todo_list(todo_raw).unwrap();
                 if task_lists.is_empty() || task_lists.contains(&todo_list.title.as_str()) {
-                    print_todo(stdout, todo_raw, &labels, all, done, short, completed, open)?;
+                    print_todo(
+                        stdout,
+                        todo_raw,
+                        &p.labels,
+                        p.all,
+                        p.done,
+                        p.short,
+                        p.completed,
+                        p.open,
+                    )?;
                 }
             }
         }
@@ -177,8 +196,8 @@ fn list_message(
         return Ok(());
     }
 
-    for ctx in &config.ctxs {
-        if !global && ctx.name != config.active_ctx_name {
+    for ctx in &p.config.ctxs {
+        if !p.global && ctx.name != p.config.active_ctx_name {
             continue;
         }
 
@@ -212,7 +231,7 @@ fn list_message(
                 ),
             };
 
-            // Note: one could form directly the path to the file and directly
+            // NOTE: one could form directly the path to the file and directly
             // check if it exists or not to avoid iterating through all the
             // files in the context.
             let todo_list = parse_todo_list(todo_raw.as_str()).unwrap();
@@ -220,12 +239,12 @@ fn list_message(
                 print_todo(
                     stdout,
                     todo_raw.as_str(),
-                    &labels,
-                    all,
-                    done,
-                    short,
-                    completed,
-                    open,
+                    &p.labels,
+                    p.all,
+                    p.done,
+                    p.short,
+                    p.completed,
+                    p.open,
                 )?;
             }
         }
@@ -243,7 +262,7 @@ fn is_valid_extension(ext: &str) -> bool {
 
 /// Prints folder location from which Todo lists are being parsed
 ///
-/// Note: there is two references, one for tests and one for list command. We avoid the petty case
+/// NOTE: there is two references, one for tests and one for list command. We avoid the petty case
 /// where modifying at one place might not affect the other (imagine tests running fine but actual
 /// logic is different).
 fn print_todo_folder_location(
@@ -325,6 +344,7 @@ fn print_todo(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lazy_static::lazy_static;
     use simplelog::*;
 
     // TODO wait for before/after_test macro
@@ -338,11 +358,136 @@ mod tests {
         );
     }
 
-    // Note: we test the short message everytime because Todo display message might be subject to
-    // change
-    const SHORT: bool = true;
+    // The builder pattern makes it easy to create new structs for a growing
+    // number of test cases with nice default values that may need tweaking.
+    // Because it is only for testing, then the builder methods do not need to
+    // be public when processing a `todo list` issued by the user since all
+    // relevant fields are public already.
+    impl<'a> Parameters<'a> {
+        /// Set `all` parameter to true
+        fn all(mut self) -> Parameters<'a> {
+            self.all = true;
+            self
+        }
 
-    // Note: testing buffered output idea https://stackoverflow.com/a/48393114
+        /// Set `completed` parameter to true
+        fn completed(mut self) -> Parameters<'a> {
+            self.completed = true;
+            self
+        }
+
+        /// Set `config` parameter to true
+        fn config(mut self, config: Configuration) -> Parameters<'a> {
+            self.config = config;
+            self
+        }
+
+        /// Set `done` parameter to true
+        fn done(mut self) -> Parameters<'a> {
+            self.done = true;
+            self
+        }
+
+        /// Set entries for testing purposes
+        fn entries(mut self, entries: Vec<Vec<&'a str>>) -> Parameters {
+            self.entries = Some(entries);
+            self
+        }
+
+        /// Set `global` parameter to true
+        fn global(mut self) -> Parameters<'a> {
+            self.global = true;
+            self
+        }
+
+        /// Set labels
+        fn labels(mut self, labels: Vec<&'a str>) -> Parameters {
+            self.labels = labels;
+            self
+        }
+
+        /// Build a new Parameter struct.
+        fn new() -> Parameters<'a> {
+            Parameters {
+                all: false,
+                completed: false,
+                config: Configuration::new(),
+                done: false,
+                entries: None,
+                global: false,
+                labels: vec![],
+                open: false,
+                short: false,
+                task_lists: None,
+            }
+        }
+
+        /// Set `open` parameter to true
+        fn open(mut self) -> Parameters<'a> {
+            self.open = true;
+            self
+        }
+
+        /// Set `short` parameter to true
+        fn short(mut self) -> Parameters<'a> {
+            self.short = true;
+            self
+        }
+
+        /// Set task lists in Parameters struct:
+        fn task_lists(mut self, task_lists: Vec<&'a str>) -> Parameters {
+            self.task_lists = Some(task_lists);
+            self
+        }
+    }
+
+    lazy_static! {
+        static ref CONFIG_TWO_CTX_1: Configuration = Configuration {
+            active_ctx_name: String::from("ctx1"),
+            ctxs: vec![
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx1"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder1"),
+                },
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx2"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder2"),
+                },
+            ],
+        };
+        static ref CONFIG_TWO_CTX_2: Configuration = Configuration {
+            active_ctx_name: String::from("ctx2"),
+            ctxs: vec![
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx1"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder1"),
+                },
+                Context {
+                    ide: String::from(""),
+                    name: String::from("ctx2"),
+                    timezone: String::from("CET"),
+                    folder_location: String::from("fake/folder2"),
+                },
+            ],
+        };
+        static ref CONFIG_ONE_CTX: Configuration = Configuration {
+            active_ctx_name: String::from("ctx1"),
+            ctxs: vec![Context {
+                ide: String::from(""),
+                name: String::from("ctx1"),
+                timezone: String::from("CET"),
+                folder_location: String::from("fake/folder"),
+            }],
+        };
+    }
+
+    // NOTE: testing buffered output idea https://stackoverflow.com/a/48393114
     // One could write to a string then display the message but the string can possibly take a lot
     // of memory before being written to stdout. Therefore, it is better to println as you iterate
     // through Todo lists. Testing is then a little more complicated than comparing two strings.
@@ -352,74 +497,31 @@ mod tests {
     fn empty_configuration() {
         init();
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx1"),
-            ctxs: vec![],
-        };
-        let labels: Vec<&str> = Vec::new();
-        let all = false;
-        let done = false;
-        let global = false;
-        let completed = false;
-        let open = false;
         let entries = vec![];
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            None,
-        )
-        .is_err());
+        let parameters = Parameters::new()
+            .config(Configuration {
+                active_ctx_name: String::from("ctx1"),
+                ctxs: vec![],
+            })
+            .entries(entries);
+        assert!(list_message(&mut stdout, parameters).is_err());
     }
 
     #[test]
     fn todo_context_with_no_todo_lists() {
         init();
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx1"),
-            ctxs: vec![Context {
-                ide: String::from(""),
-                name: String::from("ctx1"),
-                timezone: String::from("CET"),
-                folder_location: String::from("fake/folder"),
-            }],
-        };
-        let labels: Vec<&str> = Vec::new();
-        let all = false;
-        let done = false;
-        let global = false;
-        let completed = false;
-        let open = false;
-        let entries = vec![vec![]];
+        let parameters = Parameters::new()
+            .entries(vec![vec![]])
+            .config(CONFIG_ONE_CTX.to_owned());
 
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            None,
-        )
-        .is_ok());
+        assert!(list_message(&mut stdout, parameters).is_ok());
         let expected = b"Todo lists from fake/folder\n";
         assert_eq!(
             stdout,
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
-            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(stdout.to_owned()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
     }
@@ -428,225 +530,106 @@ mod tests {
     fn list_todo_lists_from_one_config() {
         init();
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx1"),
-            ctxs: vec![Context {
-                ide: String::from(""),
-                name: String::from("ctx1"),
-                timezone: String::from("CET"),
-                folder_location: String::from("fake/folder"),
-            }],
-        };
-        let labels: Vec<&str> = Vec::new();
-        let all = false;
-        let done = false;
-        let global = false;
-        let completed = false;
-        let open = false;
-        let entries = vec![vec![
-            "# title1\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [ ] first",
-            "# title2\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [x] first",
-        ]];
+        let parameters = Parameters::new()
+            .entries(vec![vec![
+                "# title1\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [ ] first",
+                "# title2\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [x] first",
+            ]])
+            .config(CONFIG_ONE_CTX.to_owned())
+            .short();
 
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            None,
-        )
-        .is_ok());
+        assert!(list_message(&mut stdout, parameters).is_ok());
         let expected = b"Todo lists from fake/folder\n0/1\t- title1\n";
         assert_eq!(
             stdout,
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
-            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(stdout.to_owned()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
 
         // with done
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx1"),
-            ctxs: vec![Context {
-                ide: String::from(""),
-                name: String::from("ctx1"),
-                timezone: String::from("CET"),
-                folder_location: String::from("fake/folder"),
-            }],
-        };
-        let labels: Vec<&str> = Vec::new();
-        let all = false;
-        let done = true;
-        let global = false;
-        let completed = false;
-        let open = false;
-        let entries = vec![vec![
-            "# title1\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [ ] first",
-            "# title2\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [x] first",
-        ]];
+        let parameters = Parameters::new()
+            .entries(vec![vec![
+                "# title1\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [ ] first",
+                "# title2\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [x] first",
+            ]])
+            .config(CONFIG_ONE_CTX.to_owned())
+            .short()
+            .done();
 
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            None,
-        )
-        .is_ok());
+        assert!(list_message(&mut stdout, parameters).is_ok());
         let expected = b"Todo lists from fake/folder\n1/1\t- title2\n";
         assert_eq!(
             stdout,
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
-            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(stdout.to_owned()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
 
         // with all
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx1"),
-            ctxs: vec![Context {
-                ide: String::from(""),
-                name: String::from("ctx1"),
-                timezone: String::from("CET"),
-                folder_location: String::from("fake/folder"),
-            }],
-        };
-        let labels: Vec<&str> = Vec::new();
-        let all = true;
-        let done = false;
-        let global = false;
-        let completed = false;
-        let open = false;
-        let entries = vec![vec![
-            "# title1\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [ ] first",
-            "# title2\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [x] first",
-        ]];
+        let parameters = Parameters::new()
+            .entries(vec![vec![
+                "# title1\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [ ] first",
+                "# title2\n\n## Description\n\nLABEL=\n\n## Todo list\n\n* [x] first",
+            ]])
+            .config(CONFIG_ONE_CTX.to_owned())
+            .short()
+            .all();
 
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            None,
-        )
-        .is_ok());
+        assert!(list_message(&mut stdout, parameters).is_ok());
         let expected = b"Todo lists from fake/folder\n0/1\t- title1\n1/1\t- title2\n";
         assert_eq!(
             stdout,
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
-            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(stdout.to_owned()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
 
         // with labels
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx1"),
-            ctxs: vec![Context {
-                ide: String::from(""),
-                name: String::from("ctx1"),
-                timezone: String::from("CET"),
-                folder_location: String::from("fake/folder"),
-            }],
-        };
-        let labels: Vec<&str> = vec!["l2"];
-        let all = true;
-        let done = false;
-        let global = false;
-        let completed = false;
-        let open = false;
-        let entries = vec![vec![
-            "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] first",
-            "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] first",
-        ]];
+        let parameters = Parameters::new()
+            .entries(vec![vec![
+                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] first",
+                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] first",
+            ]])
+            .config(CONFIG_ONE_CTX.to_owned())
+            .labels(vec!["l2"])
+            .short()
+            .all();
 
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            None,
-        )
-        .is_ok());
+        assert!(list_message(&mut stdout, parameters).is_ok());
         let expected = b"Todo lists from fake/folder\n1/1\t- title2\n";
         assert_eq!(
             stdout,
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
-            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(stdout.to_owned()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
 
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx1"),
-            ctxs: vec![Context {
-                ide: String::from(""),
-                name: String::from("ctx1"),
-                timezone: String::from("CET"),
-                folder_location: String::from("fake/folder"),
-            }],
-        };
-        let labels: Vec<&str> = vec!["l1"];
-        let all = true;
-        let done = false;
-        let global = false;
-        let completed = false;
-        let open = false;
-        let entries = vec![vec![
-            "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] first",
-            "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] first",
-        ]];
+        let parameters = Parameters::new()
+            .entries(vec![vec![
+                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] first",
+                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] first",
+            ]])
+            .config(CONFIG_ONE_CTX.to_owned())
+            .labels(vec!["l1"])
+            .short()
+            .all();
 
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            None,
-        )
-        .is_ok());
+        assert!(list_message(&mut stdout, parameters).is_ok());
         let expected = b"Todo lists from fake/folder\n0/1\t- title1\n";
         assert_eq!(
             stdout,
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
-            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(stdout.to_owned()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
     }
@@ -655,118 +638,58 @@ mod tests {
     fn list_todo_lists_from_all_config() {
         init();
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx1"),
-            ctxs: vec![
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx1"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder1"),
-                },
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx2"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder2"),
-                },
-            ],
-        };
-        let labels: Vec<&str> = vec!["l1"];
-        let all = true;
-        let done = false;
-        let global = true;
-        let completed = false;
-        let open = false;
-        let entries = vec![
-            vec![
-                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] first",
-                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] first",
-            ],
-            vec![
-                "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [x] first",
-                "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [ ] first",
-            ],
-        ];
+        let parameters = Parameters::new()
+            .entries(vec![
+                vec![
+                    "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] first",
+                    "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] first",
+                ],
+                vec![
+                    "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [x] first",
+                    "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [ ] first",
+                ],
+            ])
+            .config(CONFIG_TWO_CTX_1.to_owned())
+            .labels(vec!["l1"])
+            .short()
+            .all()
+            .global();
 
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            None,
-        )
-        .is_ok());
+        assert!(list_message(&mut stdout, parameters).is_ok());
         let expected = b"Todo lists from fake/folder1\n0/1\t- title1\nTodo lists from fake/folder2\n1/1\t- title3\n";
         assert_eq!(
             stdout,
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
-            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(stdout.to_owned()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
 
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx1"),
-            ctxs: vec![
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx1"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder1"),
-                },
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx2"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder2"),
-                },
-            ],
-        };
-        let labels: Vec<&str> = vec!["l2"];
-        let all = true;
-        let done = false;
-        let global = true;
-        let completed = false;
-        let open = false;
-        let entries = vec![
-            vec![
-                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] first",
-                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] first",
-            ],
-            vec![
-                "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [x] first",
-                "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [ ] first",
-            ],
-        ];
+        let parameters = Parameters::new()
+            .entries(vec![
+                vec![
+                    "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] first",
+                    "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] first",
+                ],
+                vec![
+                    "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [x] first",
+                    "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [ ] first",
+                ],
+            ])
+            .config(CONFIG_TWO_CTX_1.to_owned())
+            .labels(vec!["l2"])
+            .short()
+            .all()
+            .global();
 
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            None,
-        )
-        .is_ok());
+        assert!(list_message(&mut stdout, parameters).is_ok());
         let expected = b"Todo lists from fake/folder1\n1/1\t- title2\nTodo lists from fake/folder2\n0/1\t- title4\n";
         assert_eq!(
             stdout,
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
-            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(stdout.to_owned()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
     }
@@ -783,30 +706,7 @@ mod tests {
     fn list_open_tasks() {
         init();
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx1"),
-            ctxs: vec![
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx1"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder1"),
-                },
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx2"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder2"),
-                },
-            ],
-        };
-        let labels: Vec<&str> = vec!["l1"];
-        let all = false;
-        let done = false;
-        let global = false;
-        let completed = false;
-        let open = true;
-        let entries = vec![
+        let parameters=Parameters::new().entries(vec![
             vec![
                 "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
                 "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
@@ -815,56 +715,20 @@ mod tests {
                 "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
                 "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
             ],
-        ];
+        ]).config(CONFIG_TWO_CTX_1.to_owned()).labels(vec!["l1"]).open();
 
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            None,
-        )
-        .is_ok());
+        assert!(list_message(&mut stdout, parameters).is_ok());
         let expected = b"Todo lists from fake/folder1\n# title1\n* [ ] open1\n* [ ] open2\n";
         assert_eq!(
             stdout,
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
-            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(stdout.to_owned()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
 
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx1"),
-            ctxs: vec![
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx1"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder1"),
-                },
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx2"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder2"),
-                },
-            ],
-        };
-        let labels: Vec<&str> = vec!["l2"];
-        let all = false;
-        let done = false;
-        let global = false;
-        let completed = false;
-        let open = true;
-        let entries = vec![
+        let parameters=Parameters::new().entries(vec![
             vec![
                 "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
                 "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
@@ -873,28 +737,15 @@ mod tests {
                 "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
                 "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
             ],
-        ];
+        ]).config(CONFIG_TWO_CTX_1.to_owned()).labels(vec!["l2"]).open();
 
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            None,
-        )
-        .is_ok());
+        assert!(list_message(&mut stdout, parameters).is_ok());
         let expected = b"Todo lists from fake/folder1\n# title2\n* [ ] open1\n* [ ] open2\n";
         assert_eq!(
             stdout,
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
-            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(stdout.to_owned()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
     }
@@ -903,30 +754,7 @@ mod tests {
     fn list_completed_tasks() {
         init();
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx1"),
-            ctxs: vec![
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx1"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder1"),
-                },
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx2"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder2"),
-                },
-            ],
-        };
-        let labels: Vec<&str> = vec!["l1"];
-        let all = false;
-        let done = false;
-        let global = false;
-        let completed = true;
-        let open = false;
-        let entries = vec![
+        let parameters=Parameters::new().config(CONFIG_TWO_CTX_1.to_owned()).entries(vec![
             vec![
                 "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
                 "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
@@ -935,57 +763,21 @@ mod tests {
                 "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
                 "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
             ],
-        ];
+        ]).labels(vec!["l1"]).completed();
 
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            None,
-        )
-        .is_ok());
+        assert!(list_message(&mut stdout, parameters).is_ok());
         let expected =
             b"Todo lists from fake/folder1\n# title1\n* [x] completed1\n* [x] completed2\n";
         assert_eq!(
             stdout,
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
-            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(stdout.to_owned()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
 
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx1"),
-            ctxs: vec![
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx1"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder1"),
-                },
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx2"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder2"),
-                },
-            ],
-        };
-        let labels: Vec<&str> = vec!["l2"];
-        let all = false;
-        let done = false;
-        let global = false;
-        let completed = true;
-        let open = false;
-        let entries = vec![
+        let parameters=Parameters::new().entries(vec![
             vec![
                 "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
                 "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
@@ -994,29 +786,16 @@ mod tests {
                 "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
                 "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
             ],
-        ];
+        ]).config(CONFIG_TWO_CTX_1.to_owned()).labels(vec!["l2"]).completed();
 
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            None,
-        )
-        .is_ok());
+        assert!(list_message(&mut stdout, parameters).is_ok());
         let expected =
             b"Todo lists from fake/folder1\n# title2\n* [x] completed1\n* [x] completed2\n";
         assert_eq!(
             stdout,
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
-            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(stdout.to_owned()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
     }
@@ -1025,30 +804,7 @@ mod tests {
     fn show_one_task_list() {
         init();
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx2"),
-            ctxs: vec![
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx1"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder1"),
-                },
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx2"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder2"),
-                },
-            ],
-        };
-        let labels: Vec<&str> = vec![];
-        let all = false;
-        let done = false;
-        let global = false;
-        let completed = false;
-        let open = true;
-        let entries = vec![
+        let parameters=Parameters::new().entries(vec![
             vec![
                 "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
                 "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
@@ -1057,29 +813,15 @@ mod tests {
                 "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
                 "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
             ],
-        ];
-        let task_lists = vec!["title3"];
+        ]).config(CONFIG_TWO_CTX_2.to_owned()).open().task_lists(vec!["title3"]);
 
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            Some(task_lists),
-        )
-        .is_ok());
+        assert!(list_message(&mut stdout, parameters).is_ok());
         let expected = b"Todo lists from fake/folder2\n# title3\n* [ ] open1\n* [ ] open2\n";
         assert_eq!(
             stdout,
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
-            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(stdout.to_owned()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
     }
@@ -1088,30 +830,7 @@ mod tests {
     fn show_many_task_lists() {
         init();
         let mut stdout = vec![];
-        let config = Configuration {
-            active_ctx_name: String::from("ctx2"),
-            ctxs: vec![
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx1"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder1"),
-                },
-                Context {
-                    ide: String::from(""),
-                    name: String::from("ctx2"),
-                    timezone: String::from("CET"),
-                    folder_location: String::from("fake/folder2"),
-                },
-            ],
-        };
-        let labels: Vec<&str> = vec![];
-        let all = false;
-        let done = false;
-        let global = false;
-        let completed = false;
-        let open = true;
-        let entries = vec![
+        let parameters=Parameters::new().entries(vec![
             vec![
                 "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
                 "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
@@ -1121,29 +840,17 @@ mod tests {
                 "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
                 "# title5\n\n## Description\n\nLABEL=l3\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2\n* [ ] open3",
             ],
-        ];
-        let task_lists = vec!["title3", "title5"];
+        ])
+            .config(CONFIG_TWO_CTX_2.to_owned()).open()
+        .task_lists (vec!["title3", "title5"]);
 
-        assert!(list_message(
-            &mut stdout,
-            &config,
-            labels,
-            SHORT,
-            all,
-            done,
-            global,
-            completed,
-            open,
-            Some(entries),
-            Some(task_lists),
-        )
-        .is_ok());
+        assert!(list_message(&mut stdout, parameters).is_ok());
         let expected = b"Todo lists from fake/folder2\n# title3\n* [ ] open1\n* [ ] open2\n# title5\n* [ ] open1\n* [ ] open2\n* [ ] open3\n";
         assert_eq!(
             stdout,
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
-            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(stdout.to_owned()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
     }
