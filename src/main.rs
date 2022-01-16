@@ -11,7 +11,7 @@ use todo::parse::{parse_active_context, parse_configuration_file};
 fn main() -> Result<(), std::io::Error> {
     // TODO comment before release
     //let _ = TermLogger::init(
-    //    LevelFilter::Debug,
+    //    LevelFilter::Trace,
     //    Config::default(),
     //    TerminalMode::Mixed,
     //    ColorChoice::Auto,

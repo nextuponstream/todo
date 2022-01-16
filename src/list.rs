@@ -1,10 +1,10 @@
 //! List all Todo lists in active Todo context
 use crate::{
-    parse::{parse_todo_list, parse_todo_list_tasks},
+    parse::{parse_todo_list, parse_todo_list_section, parse_todo_list_tasks},
     Configuration, Context,
 };
 use clap::{crate_authors, App, Arg, ArgMatches};
-use log::{debug, trace};
+use log::debug;
 use std::{fs::read_to_string, path::Path};
 use walkdir::WalkDir;
 
@@ -27,6 +27,7 @@ use walkdir::WalkDir;
 // The reason to preserve this reference to either stdout or a Vec<u8> is that
 // during tests, you need to check the correctness of what is printed out
 // (the Vec<u8> substituting as stdout).
+#[derive(Debug)]
 pub struct Parameters<'a> {
     pub all: bool,
     pub completed: bool,
@@ -38,6 +39,7 @@ pub struct Parameters<'a> {
     pub open: bool,
     pub short: bool,
     pub task_lists: Option<Vec<&'a str>>,
+    pub sections: Option<Vec<&'a str>>,
 }
 
 /// Returns Todo list command
@@ -79,6 +81,12 @@ pub fn list_command() -> App<'static, 'static> {
                 .help("Lists Todo lists from all contexts"),
         )
         .arg(
+            Arg::with_name("open-tasks")
+                .short("o")
+                .long("open")
+                .help("Shows only open tasks in the lists (default shows the entire task list)"),
+        )
+        .arg(
             Arg::with_name("completed-tasks")
                 .short("c")
                 .long("completed-tasks")
@@ -87,11 +95,12 @@ pub fn list_command() -> App<'static, 'static> {
                 ),
         )
         .arg(
-            Arg::with_name("open-tasks")
-                .short("o")
-                .long("open-tasks")
-                .conflicts_with("completed-tasks")
-                .help("Shows only open tasks in the lists (default shows the entire task list)"),
+            Arg::with_name("sections")
+                .long("section")
+                .multiple(true)
+                .number_of_values(1)
+                .takes_value(true)
+                .help("Shows specified section of task list"),
         )
         .arg(
             Arg::with_name("task-lists")
@@ -127,6 +136,10 @@ pub fn list_command_process(
             Some(tls) => Some(tls.collect::<Vec<_>>()),
             None => None,
         },
+        sections: match args.values_of("sections") {
+            Some(ss) => Some(ss.collect::<Vec<_>>()),
+            None => None,
+        },
     };
 
     list_message(&mut std::io::stdout(), parameters)
@@ -145,9 +158,6 @@ pub fn list_command_process(
 /// * `entries` - when provided, don't use Todo list file entries at Todo context folder location
 /// * `task_lists` - when provided, show only specified task lists
 fn list_message(stdout: &mut dyn std::io::Write, p: Parameters) -> Result<(), std::io::Error> {
-    debug!("short: {}", p.short);
-    assert!(!(p.completed && p.open));
-
     if !p.config.is_valid() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -156,6 +166,7 @@ fn list_message(stdout: &mut dyn std::io::Write, p: Parameters) -> Result<(), st
     }
 
     let task_lists = p.task_lists.unwrap_or(vec![]);
+    let sections = p.sections.unwrap_or(vec![]);
 
     if p.entries.is_some() {
         let mut entries = p.entries.unwrap();
@@ -188,6 +199,7 @@ fn list_message(stdout: &mut dyn std::io::Write, p: Parameters) -> Result<(), st
                         p.short,
                         p.completed,
                         p.open,
+                        &sections,
                     )?;
                 }
             }
@@ -216,7 +228,6 @@ fn list_message(stdout: &mut dyn std::io::Write, p: Parameters) -> Result<(), st
                 continue;
             }
             let filepath = entry.path().to_str().unwrap();
-            debug!("todo: {}", filepath);
             let extension = Path::new(&filepath).extension().unwrap().to_str().unwrap();
             // avoid coercing .jpg files into Todo list
             if !is_valid_extension(&extension) {
@@ -245,6 +256,7 @@ fn list_message(stdout: &mut dyn std::io::Write, p: Parameters) -> Result<(), st
                     p.short,
                     p.completed,
                     p.open,
+                    &sections,
                 )?;
             }
         }
@@ -293,48 +305,69 @@ fn print_todo(
     short: bool,
     completed: bool,
     open: bool,
+    sections: &Vec<&str>,
 ) -> Result<(), std::io::Error> {
-    trace!("print_todo");
     let todo_list = parse_todo_list(&todo_raw).unwrap();
-    debug!("labels count: {}", labels.len());
-    debug!(
-        "All labels matches: {}",
-        labels
-            .iter()
-            .all(|l| todo_list.labels.iter().any(|fl| fl == l))
-    );
     if labels
         .iter()
         .all(|l| todo_list.labels.iter().any(|fl| fl == l))
     {
         let is_done = todo_list.tasks_are_all_done();
-        debug!("all: {}", all);
-        debug!("is_done: {}", is_done);
-        debug!("done: {}", done);
-        debug!("!all && (is_done ^ done): {}", !all && (is_done ^ done));
         // so XOR is a thing: https://doc.rust-lang.org/reference/types/boolean.html#logical-xor
         if !all && (is_done ^ done) {
-            trace!("skipped");
             return Ok(());
         }
-        if completed ^ open {
+
+        if completed || open {
             writeln!(stdout, "# {}", todo_list.title)?;
-            let tasks = parse_todo_list_tasks(todo_raw, completed, open, short).unwrap();
-            for task in tasks {
-                // trim_end avoid cluttering the output with all whitespace the
-                // user might have used to make his Todo list more readable or
-                // the accidental trailing spaces he might have left
-                writeln!(stdout, "{}", task.as_str().trim_end())?;
+            if sections.is_empty() {
+                let tasks = parse_todo_list_tasks(todo_raw, completed, open, short, None).unwrap();
+                for task in tasks {
+                    // trim_end avoid cluttering the output with all whitespace the
+                    // user might have used to make his Todo list more readable or
+                    // the accidental trailing spaces he might have left
+                    writeln!(stdout, "{}", task.as_str().trim_end())?;
+                }
+            } else {
+                for section in sections {
+                    writeln!(stdout, "\n## {section}\n")?;
+                    let tasks =
+                        parse_todo_list_tasks(todo_raw, completed, open, short, Some(section))
+                            .unwrap();
+                    for task in tasks {
+                        // trim_end avoid cluttering the output with all whitespace the
+                        // user might have used to make his Todo list more readable or
+                        // the accidental trailing spaces he might have left
+                        writeln!(stdout, "{}", task.as_str().trim_end())?;
+                    }
+                }
             }
         } else {
-            if short {
-                writeln!(
-                    stdout,
-                    "{}/{}\t- {}",
-                    todo_list.done, todo_list.total, todo_list.title
-                )?;
+            if sections.is_empty() {
+                if short {
+                    writeln!(
+                        stdout,
+                        "{}/{}\t- {}",
+                        todo_list.done, todo_list.total, todo_list.title
+                    )?;
+                } else {
+                    writeln!(stdout, "{}", todo_raw)?;
+                }
             } else {
-                writeln!(stdout, "{}", todo_raw)?;
+                for section in sections {
+                    let todo_list_section = parse_todo_list_section(&todo_list, section).unwrap();
+                    if short {
+                        writeln!(
+                            stdout,
+                            "{}/{}\t- {} ({section})",
+                            todo_list_section.done,
+                            todo_list_section.total,
+                            todo_list_section.title
+                        )?;
+                    } else {
+                        writeln!(stdout, "{}", todo_raw)?;
+                    }
+                }
             }
         }
     }
@@ -351,7 +384,7 @@ mod tests {
     // https://github.com/rust-lang/rfcs/issues/1664
     fn init() {
         let _ = TermLogger::init(
-            LevelFilter::Trace,
+            LevelFilter::Warn,
             Config::default(),
             TerminalMode::Mixed,
             ColorChoice::Auto,
@@ -419,6 +452,7 @@ mod tests {
                 open: false,
                 short: false,
                 task_lists: None,
+                sections: None,
             }
         }
 
@@ -437,6 +471,12 @@ mod tests {
         /// Set task lists in Parameters struct:
         fn task_lists(mut self, task_lists: Vec<&'a str>) -> Parameters {
             self.task_lists = Some(task_lists);
+            self
+        }
+
+        /// Set task lists in Parameters struct:
+        fn sections(mut self, sections: Vec<&'a str>) -> Parameters {
+            self.sections = Some(sections);
             self
         }
     }
@@ -548,7 +588,6 @@ mod tests {
             String::from_utf8(expected.to_vec()).unwrap()
         );
 
-        // with done
         let mut stdout = vec![];
         let parameters = Parameters::new()
             .entries(vec![vec![
@@ -569,7 +608,6 @@ mod tests {
             String::from_utf8(expected.to_vec()).unwrap()
         );
 
-        // with all
         let mut stdout = vec![];
         let parameters = Parameters::new()
             .entries(vec![vec![
@@ -590,7 +628,6 @@ mod tests {
             String::from_utf8(expected.to_vec()).unwrap()
         );
 
-        // with labels
         let mut stdout = vec![];
         let parameters = Parameters::new()
             .entries(vec![vec![
@@ -851,6 +888,207 @@ mod tests {
             expected,
             "\ngot     : \"{}\"\nexpected: \"{}\"",
             String::from_utf8(stdout.to_owned()).unwrap(),
+            String::from_utf8(expected.to_vec()).unwrap()
+        );
+    }
+
+    #[test]
+    fn show_section_open() {
+        init();
+        let mut stdout = vec![];
+        let parameters = Parameters::new()
+            .entries(vec![
+            vec![
+                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+            vec![
+                "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n\
+* [ ] open1\n* [x] completed1\n\n### Section1\n\n* [ ] open2\n* [x] completed2\n\
+\n### Section2\n\n* [ ] open3\n* [x] completed3",
+                "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+                "# title5\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n\
+* [x] completed1\n* [ ] open1\n\n### Section1\n\n* [x] completed2\n* [ ] open2\n\
+\n### Section2\n\n* [x] completed3\n* [ ] open3",
+            ],
+        ])
+            .config(CONFIG_TWO_CTX_2.to_owned())
+            .sections(vec!["Section2"])
+            .open()
+            .task_lists(vec!["title3", "title5"]);
+
+        assert!(list_message(&mut stdout, parameters).is_ok());
+        let expected = b"Todo lists from fake/folder2\n# title3\n\n## Section2\
+\n\n* [ ] open3\n# title5\n\n## Section2\n\n* [ ] open3\n";
+        assert_eq!(
+            stdout,
+            expected,
+            "\ngot     : \"{}\"\nexpected: \"{}\"",
+            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(expected.to_vec()).unwrap()
+        );
+    }
+
+    #[test]
+    fn show_section_completed() {
+        init();
+        let mut stdout = vec![];
+        let parameters = Parameters::new()
+            .entries(vec![
+            vec![
+                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+            vec![
+                "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n\
+* [ ] open1\n* [x] completed1\n\n### Section1\n\n* [ ] open2\n* [x] completed2\n\
+\n### Section2\n\n* [ ] open3\n* [x] completed3",
+                "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+                "# title5\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n\
+* [x] completed1\n* [ ] open1\n\n### Section1\n\n* [x] completed2\n* [ ] open2\n\
+\n### Section2\n\n* [x] completed3\n* [ ] open3",
+            ],
+        ])
+            .config(CONFIG_TWO_CTX_2.to_owned()).sections(vec!["Section2"]).completed().task_lists(vec!["title3", "title5"]);
+
+        assert!(list_message(&mut stdout, parameters).is_ok());
+        let expected = b"Todo lists from fake/folder2\n# title3\n\n## Section2\
+\n\n* [x] completed3\n# title5\n\n## Section2\n\n* [x] completed3\n";
+        assert_eq!(
+            stdout,
+            expected,
+            "\ngot     : \"{}\"\nexpected: \"{}\"",
+            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(expected.to_vec()).unwrap()
+        );
+    }
+
+    #[test]
+    fn show_section() {
+        init();
+        let mut stdout = vec![];
+        let parameters = Parameters::new()
+            .entries(vec![
+            vec![
+                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+            vec![
+                "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n\
+* [ ] open1\n* [x] completed1\n\n### Section1\n\n* [ ] open2\n* [x] completed2\n\
+\n### Section2\n\n* [ ] open3\n* [x] completed3",
+                "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+                "# title5\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n\
+* [x] completed1\n* [ ] open1\n\n### Section1\n\n* [x] completed2\n* [ ] open2\n\
+\n### Section2\n\n* [x] completed3\n* [ ] open3",
+            ],
+        ])
+            .config(CONFIG_TWO_CTX_2.to_owned()).sections(vec!["Section2"]).completed().open().task_lists(vec!["title3", "title5"]);
+
+        assert!(list_message(&mut stdout, parameters).is_ok());
+        let expected = b"Todo lists from fake/folder2\n# title3\n\n## Section2\
+\n\n* [ ] open3\n* [x] completed3\n# title5\n\n## Section2\n\n* [x] completed3\n* [ ] open3\n";
+        assert_eq!(
+            stdout,
+            expected,
+            "\ngot     : \"{}\"\nexpected: \"{}\"",
+            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(expected.to_vec()).unwrap()
+        );
+
+        let mut stdout = vec![];
+        let parameters = Parameters::new()
+            .entries(vec![
+            vec![
+                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+            vec![
+                "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n\
+* [ ] open1\n* [x] completed1\n\n### Section1\n\n* [ ] open2\n* [x] completed2\n\
+\n### Section2\n\n* [ ] open3\n* [x] completed3\n\n### Section3\n\n* [ ] open4",
+                "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+                "# title5\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n\
+* [x] completed1\n* [ ] open1\n\n### Section1\n\n* [x] completed2\n* [ ] open2\n\
+\n### Section2\n\n* [x] completed3\n* [ ] open3\n\n### Section3\n\n* [ ] open4",
+            ],
+        ])
+            .config(CONFIG_TWO_CTX_2.to_owned()).sections(vec!["Section2"]).completed().open().task_lists(vec!["title3", "title5"]);
+
+        assert!(list_message(&mut stdout, parameters).is_ok());
+        let expected = b"Todo lists from fake/folder2\n# title3\n\n## Section2\
+\n\n* [ ] open3\n* [x] completed3\n# title5\n\n## Section2\n\n* [x] completed3\n* [ ] open3\n";
+        assert_eq!(
+            stdout,
+            expected,
+            "\ngot     : \"{}\"\nexpected: \"{}\"",
+            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(expected.to_vec()).unwrap()
+        );
+
+        let mut stdout = vec![];
+        let parameters = Parameters::new()
+            .entries(vec![
+            vec![
+                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+            vec![
+                "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n\
+* [ ] open1\n* [x] completed1\n\n### Section1\n\n* [ ] open2\n* [x] completed2\n\
+\n### Section 2\n\n* [ ] open3\n* [x] completed3\n\n### Section3\n\n* [ ] open4",
+                "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+                "# title5\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n\
+* [x] completed1\n* [ ] open1\n\n### Section1\n\n* [x] completed2\n* [ ] open2\n\
+\n### Section 2\n\n* [x] completed3 long description\n* [ ] open3\n\n### Section3\n\n* [ ] open4",
+            ],
+        ])
+            .config(CONFIG_TWO_CTX_2.to_owned()).sections(vec!["Section 2"]).completed().open().task_lists(vec!["title3", "title5"]);
+
+        assert!(list_message(&mut stdout, parameters).is_ok());
+        let expected = b"Todo lists from fake/folder2\n# title3\n\n## Section 2\
+\n\n* [ ] open3\n* [x] completed3\n# title5\n\n## Section 2\n\n* [x] completed3 long description\n* [ ] open3\n";
+        assert_eq!(
+            stdout,
+            expected,
+            "\ngot     : \"{}\"\nexpected: \"{}\"",
+            String::from_utf8(stdout.to_vec()).unwrap(),
+            String::from_utf8(expected.to_vec()).unwrap()
+        );
+    }
+
+    #[test]
+    fn show_short_section() {
+        let mut stdout = vec![];
+        let parameters = Parameters::new()
+            .entries(vec![
+            vec![
+                "# title1\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n* [ ] open1\n* [x] completed1\n* [ ] open2\n* [x] completed2",
+                "# title2\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+            ],
+            vec![
+                "# title3\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n\
+* [ ] open1\n* [x] completed1\n\n### Section1\n\n* [ ] open2\n* [x] completed2\n\
+\n### Section 2\n\n* [ ] open3\n* [x] completed3\n\n### Section3\n\n* [ ] open4",
+                "# title4\n\n## Description\n\nLABEL=l2\n\n## Todo list\n\n* [x] completed1\n* [ ] open1\n* [x] completed2\n* [ ] open2",
+                "# title5\n\n## Description\n\nLABEL=l1\n\n## Todo list\n\n\
+* [x] completed1\n* [ ] open1\n\n### Section1\n\n* [x] completed2\n* [ ] open2\n\
+\n### Section 2\n\n* [x] completed3 long description\n* [ ] open3\n\n### Section3\n\n* [ ] open4",
+            ],
+        ])
+            .config(CONFIG_TWO_CTX_2.to_owned())
+            .sections(vec!["Section 2", "Section3"]).short()
+            .task_lists(vec!["title3", "title5"]);
+
+        assert!(list_message(&mut stdout, parameters).is_ok());
+        let expected = b"Todo lists from fake/folder2\n1/2\t- title3 (Section 2\
+)\n0/1\t- title3 (Section3)\n1/2\t- title5 (Section 2)\n0/1\t- title5 (Section3\
+)\n";
+        assert_eq!(
+            stdout,
+            expected,
+            "\ngot     : \"{}\"\nexpected: \"{}\"",
+            String::from_utf8(stdout.to_vec()).unwrap(),
             String::from_utf8(expected.to_vec()).unwrap()
         );
     }
