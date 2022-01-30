@@ -1,11 +1,9 @@
 //! Create Todo list in active Todo context inside configuration
-use super::{todo_path, Context, TodoList};
+use super::{prompt_for_todo_folder_if_not_exists, todo_path, Context, TodoList};
 use clap::{crate_authors, App, Arg, ArgMatches};
 use dialoguer::Confirm;
-use log::{debug, trace};
+use log::trace;
 use std::fs::read_to_string;
-use std::path::Path;
-use std::process::exit;
 
 /// Returns Todo create command
 pub fn create_command() -> App<'static, 'static> {
@@ -83,17 +81,21 @@ pub fn create_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), st
             .map(|s| s.to_string())
             .collect(),
     };
-    debug!("todo to create:\n{}", todo);
 
     // Individual files allow for manual editing without the pain of scrolling through
     // all other todo's.
     let filepath = todo_path(ctx.folder_location.as_str(), todo.title.as_str());
 
-    prompt_for_todo_folder_if_not_exists(ctx, &todo)?;
+    if let Err(e) = prompt_for_todo_folder_if_not_exists(ctx) {
+        eprintln!("Error: {e}");
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Todo creation error",
+        ));
+    }
 
     match read_to_string(&filepath) {
         Ok(_) => {
-            trace!("Potential overwrite detected");
             if !Confirm::new()
                 .with_prompt(format!(
                     "This operation will overwrite todo \"{}\". Continue?",
@@ -114,25 +116,4 @@ pub fn create_command_process(args: &ArgMatches, ctx: &Context) -> Result<(), st
     println!("Saved todo \"{}\" ({})", todo.title, ctx.folder_location);
 
     Ok(())
-}
-
-/// Prompts user for Todo folder creation if it does not exists. Exits if user answer is negative.
-fn prompt_for_todo_folder_if_not_exists(
-    ctx: &Context,
-    todo_list: &TodoList,
-) -> Result<(), std::io::Error> {
-    Ok(if !Path::exists(Path::new(ctx.folder_location.as_str())) {
-        if Confirm::new()
-            .with_prompt(format!(
-                "Todo folder location for this context does not exists. {} cannot be created. Create {} ?",
-                todo_list.title,
-                ctx.folder_location
-            ))
-            .interact()?
-        {
-            std::fs::create_dir(ctx.folder_location.as_str())?;
-        } else {
-            exit(0);
-        }
-    })
 }

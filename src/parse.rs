@@ -65,11 +65,10 @@ pub fn parse_configuration_file(
     };
 
     let configuration: Configuration = toml::from_str(content)?;
-    if configuration
+    if !configuration
         .ctxs
         .iter()
-        .find(|&c| c.name == configuration.active_ctx_name)
-        .is_none()
+        .any(|c| c.name == configuration.active_ctx_name)
     {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -282,7 +281,7 @@ fn parse_todo_list_tasks_status(todo_raw: &str) -> (usize, usize) {
     let total = matches.count();
     for mat in DONE_RE.find_iter(todo_list.as_str()) {
         if mat.as_str().get(0..6).unwrap().eq("* [x] ") {
-            done = done + 1;
+            done += 1;
         }
     }
     (done, total)
@@ -307,7 +306,7 @@ fn parse_todo_list_labels(todo_raw: &str) -> Result<Vec<String>, std::io::Error>
         .get(1)
         .unwrap()
         .as_str()
-        .split(",")
+        .split(',')
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
         .collect::<Vec<String>>();

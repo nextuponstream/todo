@@ -132,17 +132,13 @@ pub fn list_command_process(
             .collect::<Vec<_>>(),
         open: args.is_present("open-tasks"),
         short: args.is_present("short"),
-        task_lists: match args.values_of("task-lists") {
-            Some(tls) => Some(tls.collect::<Vec<_>>()),
-            None => None,
-        },
-        sections: match args.values_of("sections") {
-            Some(ss) => Some(ss.collect::<Vec<_>>()),
-            None => None,
-        },
+        task_lists: args
+            .values_of("task-lists")
+            .map(|ss| ss.collect::<Vec<_>>()),
+        sections: args.values_of("sections").map(|ss| ss.collect::<Vec<_>>()),
     };
 
-    list_message(&mut std::io::stdout(), parameters)
+    list_message(&mut std::io::stdout(), &parameters)
 }
 
 /// Returns message when `todo list` command is invoked
@@ -157,7 +153,7 @@ pub fn list_command_process(
 /// * `global` - disable filtering by Todo context
 /// * `entries` - when provided, don't use Todo list file entries at Todo context folder location
 /// * `task_lists` - when provided, show only specified task lists
-fn list_message(stdout: &mut dyn std::io::Write, p: Parameters) -> Result<(), std::io::Error> {
+fn list_message(stdout: &mut dyn std::io::Write, p: &Parameters) -> Result<(), std::io::Error> {
     if !p.config.is_valid() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -165,11 +161,10 @@ fn list_message(stdout: &mut dyn std::io::Write, p: Parameters) -> Result<(), st
         ));
     }
 
-    let task_lists = p.task_lists.unwrap_or(vec![]);
-    let sections = p.sections.unwrap_or(vec![]);
+    let task_lists = p.task_lists.clone().unwrap_or_default();
 
     if p.entries.is_some() {
-        let mut entries = p.entries.unwrap();
+        let mut entries = p.entries.clone().unwrap();
         assert_eq!(
             entries.len(),
             p.config.ctxs.len(),
@@ -181,7 +176,7 @@ fn list_message(stdout: &mut dyn std::io::Write, p: Parameters) -> Result<(), st
 
         for ctx in p.config.ctxs.clone() {
             let directory = entries.pop().unwrap();
-            if !p.global && ctx.name != p.config.active_ctx_name {
+            if !&p.global && ctx.name != p.config.active_ctx_name {
                 continue;
             }
 
@@ -190,17 +185,7 @@ fn list_message(stdout: &mut dyn std::io::Write, p: Parameters) -> Result<(), st
             for todo_raw in directory {
                 let todo_list = parse_todo_list(todo_raw).unwrap();
                 if task_lists.is_empty() || task_lists.contains(&todo_list.title.as_str()) {
-                    print_todo(
-                        stdout,
-                        todo_raw,
-                        &p.labels,
-                        p.all,
-                        p.done,
-                        p.short,
-                        p.completed,
-                        p.open,
-                        &sections,
-                    )?;
+                    print_todo(stdout, todo_raw, p)?;
                 }
             }
         }
@@ -230,7 +215,7 @@ fn list_message(stdout: &mut dyn std::io::Write, p: Parameters) -> Result<(), st
             let filepath = entry.path().to_str().unwrap();
             let extension = Path::new(&filepath).extension().unwrap().to_str().unwrap();
             // avoid coercing .jpg files into Todo list
-            if !is_valid_extension(&extension) {
+            if !is_valid_extension(extension) {
                 continue;
             }
             let todo_raw = match read_to_string(filepath) {
@@ -247,17 +232,7 @@ fn list_message(stdout: &mut dyn std::io::Write, p: Parameters) -> Result<(), st
             // files in the context.
             let todo_list = parse_todo_list(todo_raw.as_str()).unwrap();
             if task_lists.is_empty() || task_lists.contains(&todo_list.title.as_str()) {
-                print_todo(
-                    stdout,
-                    todo_raw.as_str(),
-                    &p.labels,
-                    p.all,
-                    p.done,
-                    p.short,
-                    p.completed,
-                    p.open,
-                    &sections,
-                )?;
+                print_todo(stdout, todo_raw.as_str(), p)?;
             }
         }
     }
@@ -299,41 +274,43 @@ fn print_todo_folder_location(
 fn print_todo(
     stdout: &mut dyn std::io::Write,
     todo_raw: &str,
-    labels: &Vec<&str>,
-    all: bool,
-    done: bool,
-    short: bool,
-    completed: bool,
-    open: bool,
-    sections: &Vec<&str>,
+    p: &Parameters,
 ) -> Result<(), std::io::Error> {
-    let todo_list = parse_todo_list(&todo_raw).unwrap();
-    if labels
+    let todo_list = parse_todo_list(todo_raw).unwrap();
+    if p.labels
         .iter()
         .all(|l| todo_list.labels.iter().any(|fl| fl == l))
     {
         let is_done = todo_list.tasks_are_all_done();
         // so XOR is a thing: https://doc.rust-lang.org/reference/types/boolean.html#logical-xor
-        if !all && (is_done ^ done) {
+        if !p.all && (is_done ^ p.done) {
             return Ok(());
         }
 
-        if completed || open {
+        let sections = p.sections.clone().unwrap_or_default();
+
+        if p.completed || p.open {
             writeln!(stdout, "# {}", todo_list.title)?;
             if sections.is_empty() {
-                let tasks = parse_todo_list_tasks(todo_raw, completed, open, short, None).unwrap();
+                let tasks =
+                    parse_todo_list_tasks(todo_raw, p.completed, p.open, p.short, None).unwrap();
                 for task in tasks {
                     // trim_end avoid cluttering the output with all whitespace the
                     // user might have used to make his Todo list more readable or
                     // the accidental trailing spaces he might have left
                     writeln!(stdout, "{}", task.as_str().trim_end())?;
                 }
-            } else {
+            } else if !sections.is_empty() {
                 for section in sections {
                     writeln!(stdout, "\n## {section}\n")?;
-                    let tasks =
-                        parse_todo_list_tasks(todo_raw, completed, open, short, Some(section))
-                            .unwrap();
+                    let tasks = parse_todo_list_tasks(
+                        todo_raw,
+                        p.completed,
+                        p.open,
+                        p.short,
+                        Some(section),
+                    )
+                    .unwrap();
                     for task in tasks {
                         // trim_end avoid cluttering the output with all whitespace the
                         // user might have used to make his Todo list more readable or
@@ -342,31 +319,27 @@ fn print_todo(
                     }
                 }
             }
+        } else if sections.is_empty() {
+            if p.short {
+                writeln!(
+                    stdout,
+                    "{}/{}\t- {}",
+                    todo_list.done, todo_list.total, todo_list.title
+                )?;
+            } else {
+                writeln!(stdout, "{}", todo_raw)?;
+            }
         } else {
-            if sections.is_empty() {
-                if short {
+            for section in sections {
+                let todo_list_section = parse_todo_list_section(&todo_list, section).unwrap();
+                if p.short {
                     writeln!(
                         stdout,
-                        "{}/{}\t- {}",
-                        todo_list.done, todo_list.total, todo_list.title
+                        "{}/{}\t- {} ({section})",
+                        todo_list_section.done, todo_list_section.total, todo_list_section.title
                     )?;
                 } else {
                     writeln!(stdout, "{}", todo_raw)?;
-                }
-            } else {
-                for section in sections {
-                    let todo_list_section = parse_todo_list_section(&todo_list, section).unwrap();
-                    if short {
-                        writeln!(
-                            stdout,
-                            "{}/{}\t- {} ({section})",
-                            todo_list_section.done,
-                            todo_list_section.total,
-                            todo_list_section.title
-                        )?;
-                    } else {
-                        writeln!(stdout, "{}", todo_raw)?;
-                    }
                 }
             }
         }
@@ -378,17 +351,17 @@ fn print_todo(
 mod tests {
     use super::*;
     use lazy_static::lazy_static;
-    use simplelog::*;
+    //use simplelog::*;
 
     // TODO wait for before/after_test macro
     // https://github.com/rust-lang/rfcs/issues/1664
     fn init() {
-        let _ = TermLogger::init(
-            LevelFilter::Warn,
-            Config::default(),
-            TerminalMode::Mixed,
-            ColorChoice::Auto,
-        );
+        //    let _ = TermLogger::init(
+        //        LevelFilter::Warn,
+        //        Config::default(),
+        //        TerminalMode::Mixed,
+        //        ColorChoice::Auto,
+        //    );
     }
 
     // The builder pattern makes it easy to create new structs for a growing
@@ -544,7 +517,7 @@ mod tests {
                 ctxs: vec![],
             })
             .entries(entries);
-        assert!(list_message(&mut stdout, parameters).is_err());
+        assert!(list_message(&mut stdout, &parameters).is_err());
     }
 
     #[test]
@@ -555,7 +528,7 @@ mod tests {
             .entries(vec![vec![]])
             .config(CONFIG_ONE_CTX.to_owned());
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder\n";
         assert_eq!(
             stdout,
@@ -578,7 +551,7 @@ mod tests {
             .config(CONFIG_ONE_CTX.to_owned())
             .short();
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder\n0/1\t- title1\n";
         assert_eq!(
             stdout,
@@ -598,7 +571,7 @@ mod tests {
             .short()
             .done();
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder\n1/1\t- title2\n";
         assert_eq!(
             stdout,
@@ -618,7 +591,7 @@ mod tests {
             .short()
             .all();
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder\n0/1\t- title1\n1/1\t- title2\n";
         assert_eq!(
             stdout,
@@ -639,7 +612,7 @@ mod tests {
             .short()
             .all();
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder\n1/1\t- title2\n";
         assert_eq!(
             stdout,
@@ -660,7 +633,7 @@ mod tests {
             .short()
             .all();
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder\n0/1\t- title1\n";
         assert_eq!(
             stdout,
@@ -692,7 +665,7 @@ mod tests {
             .all()
             .global();
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder1\n0/1\t- title1\nTodo lists from fake/folder2\n1/1\t- title3\n";
         assert_eq!(
             stdout,
@@ -720,7 +693,7 @@ mod tests {
             .all()
             .global();
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder1\n1/1\t- title2\nTodo lists from fake/folder2\n0/1\t- title4\n";
         assert_eq!(
             stdout,
@@ -754,7 +727,7 @@ mod tests {
             ],
         ]).config(CONFIG_TWO_CTX_1.to_owned()).labels(vec!["l1"]).open();
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder1\n# title1\n* [ ] open1\n* [ ] open2\n";
         assert_eq!(
             stdout,
@@ -776,7 +749,7 @@ mod tests {
             ],
         ]).config(CONFIG_TWO_CTX_1.to_owned()).labels(vec!["l2"]).open();
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder1\n# title2\n* [ ] open1\n* [ ] open2\n";
         assert_eq!(
             stdout,
@@ -802,7 +775,7 @@ mod tests {
             ],
         ]).labels(vec!["l1"]).completed();
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected =
             b"Todo lists from fake/folder1\n# title1\n* [x] completed1\n* [x] completed2\n";
         assert_eq!(
@@ -825,7 +798,7 @@ mod tests {
             ],
         ]).config(CONFIG_TWO_CTX_1.to_owned()).labels(vec!["l2"]).completed();
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected =
             b"Todo lists from fake/folder1\n# title2\n* [x] completed1\n* [x] completed2\n";
         assert_eq!(
@@ -852,7 +825,7 @@ mod tests {
             ],
         ]).config(CONFIG_TWO_CTX_2.to_owned()).open().task_lists(vec!["title3"]);
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder2\n# title3\n* [ ] open1\n* [ ] open2\n";
         assert_eq!(
             stdout,
@@ -881,7 +854,7 @@ mod tests {
             .config(CONFIG_TWO_CTX_2.to_owned()).open()
         .task_lists (vec!["title3", "title5"]);
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder2\n# title3\n* [ ] open1\n* [ ] open2\n# title5\n* [ ] open1\n* [ ] open2\n* [ ] open3\n";
         assert_eq!(
             stdout,
@@ -917,7 +890,7 @@ mod tests {
             .open()
             .task_lists(vec!["title3", "title5"]);
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder2\n# title3\n\n## Section2\
 \n\n* [ ] open3\n# title5\n\n## Section2\n\n* [ ] open3\n";
         assert_eq!(
@@ -951,7 +924,7 @@ mod tests {
         ])
             .config(CONFIG_TWO_CTX_2.to_owned()).sections(vec!["Section2"]).completed().task_lists(vec!["title3", "title5"]);
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder2\n# title3\n\n## Section2\
 \n\n* [x] completed3\n# title5\n\n## Section2\n\n* [x] completed3\n";
         assert_eq!(
@@ -985,7 +958,7 @@ mod tests {
         ])
             .config(CONFIG_TWO_CTX_2.to_owned()).sections(vec!["Section2"]).completed().open().task_lists(vec!["title3", "title5"]);
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder2\n# title3\n\n## Section2\
 \n\n* [ ] open3\n* [x] completed3\n# title5\n\n## Section2\n\n* [x] completed3\n* [ ] open3\n";
         assert_eq!(
@@ -1015,7 +988,7 @@ mod tests {
         ])
             .config(CONFIG_TWO_CTX_2.to_owned()).sections(vec!["Section2"]).completed().open().task_lists(vec!["title3", "title5"]);
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder2\n# title3\n\n## Section2\
 \n\n* [ ] open3\n* [x] completed3\n# title5\n\n## Section2\n\n* [x] completed3\n* [ ] open3\n";
         assert_eq!(
@@ -1045,7 +1018,7 @@ mod tests {
         ])
             .config(CONFIG_TWO_CTX_2.to_owned()).sections(vec!["Section 2"]).completed().open().task_lists(vec!["title3", "title5"]);
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder2\n# title3\n\n## Section 2\
 \n\n* [ ] open3\n* [x] completed3\n# title5\n\n## Section 2\n\n* [x] completed3 long description\n* [ ] open3\n";
         assert_eq!(
@@ -1080,7 +1053,7 @@ mod tests {
             .sections(vec!["Section 2", "Section3"]).short()
             .task_lists(vec!["title3", "title5"]);
 
-        assert!(list_message(&mut stdout, parameters).is_ok());
+        assert!(list_message(&mut stdout, &parameters).is_ok());
         let expected = b"Todo lists from fake/folder2\n1/2\t- title3 (Section 2\
 )\n0/1\t- title3 (Section3)\n1/2\t- title5 (Section 2)\n0/1\t- title5 (Section3\
 )\n";

@@ -7,6 +7,7 @@ use todo::delete::{delete_command, delete_command_process};
 use todo::edit::{edit_command, edit_command_process};
 use todo::list::{list_command, list_command_process};
 use todo::parse::{parse_active_context, parse_configuration_file};
+use todo::r#move::{move_command, move_command_process};
 
 fn main() -> Result<(), std::io::Error> {
     // TODO comment before release
@@ -53,13 +54,14 @@ This tool was inspired from kubectl and git. This tool hopes to save some ink fr
         .subcommand(config_command())
         .subcommand(edit_command())
         .subcommand(delete_command())
-        .subcommand(list_command());
+        .subcommand(list_command())
+        .subcommand(move_command());
     let matches = app.get_matches();
 
     let default_todo_configuration_path = format!("{}/.todo", home.as_str());
     let todo_configuration_path = matches
         .value_of("with-config-path")
-        .unwrap_or(default_todo_configuration_path.as_str());
+        .unwrap_or_else(|| default_todo_configuration_path.as_str());
 
     // other subcommands than config requires a working configuration file
     let raw_config = matches.value_of("with-config");
@@ -86,6 +88,18 @@ This tool was inspired from kubectl and git. This tool hopes to save some ink fr
 
     if let Some(args) = matches.subcommand_matches("list") {
         return list_command_process(args, &config);
+    }
+
+    if let Some(args) = matches.subcommand_matches("move") {
+        if let Err(e) = move_command_process(args, &config) {
+            eprintln!("{e}");
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Move command could not complete.",
+            ));
+        } else {
+            return Ok(());
+        }
     }
 
     warn!("Unrecognised subcommand");
