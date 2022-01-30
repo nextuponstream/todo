@@ -95,15 +95,10 @@ pub fn config_create_context_process(
     config.update_active_ctx(new_ctx.name.as_str()).unwrap();
 
     debug!("config: {}", config);
-    if config
-        .ctxs
-        .iter()
-        .find(|&c| {
-            debug!("{}, {}", c.name, config.active_ctx_name);
-            c.name == config.active_ctx_name
-        })
-        .is_none()
-    {
+    if !config.ctxs.iter().any(|c| {
+        debug!("{}, {}", c.name, config.active_ctx_name);
+        c.name == config.active_ctx_name
+    }) {
         warn!("No contexts matched active context");
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,

@@ -28,7 +28,7 @@ pub fn config_command_process(
         return config_create_context_process(args, todo_configuration_path, raw_config);
     }
 
-    if let Some(_) = args.subcommand_matches("active-context") {
+    if args.subcommand_matches("active-context").is_some() {
         return active_context_command_process(todo_configuration_path, raw_config);
     }
 

@@ -4,9 +4,11 @@
 //! respective modules.
 //!
 //! Follow the `README.md` to know more about the installation.
+use dialoguer::Confirm;
 use parse::parse_configuration_file;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::path::Path;
 
 pub mod config;
 pub mod config_active_context;
@@ -17,7 +19,26 @@ pub mod create;
 pub mod delete;
 pub mod edit;
 pub mod list;
+pub mod r#move;
 pub mod parse;
+
+enum Error {
+    UserCancelledAction,
+    DirectoryCreation(std::io::Error),
+    UserInteraction(std::io::Error),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Error::UserCancelledAction => writeln!(f, "User cancelled the action"),
+            Error::DirectoryCreation(e) => writeln!(f, "Directory was not created: {e}"),
+            Error::UserInteraction(e) => {
+                writeln!(f, "There was an error while interacting with the user: {e}")
+            }
+        }
+    }
+}
 
 #[derive(Clone, Deserialize, Debug, Serialize)]
 /// Represents a themed set of Todo lists
@@ -43,14 +64,16 @@ impl fmt::Display for Context {
 
 impl Context {
     fn short(&self) -> String {
-        format!("{}", self.name)
+        self.name.to_string()
     }
 }
 
-#[derive(Deserialize, Debug, Serialize, Clone)]
+#[derive(Deserialize, Debug, Serialize, Clone, Default)]
 /// Represents all Todo contexts and the active context of the configuration
 pub struct Configuration {
+    /// The name of the active context in the configuration
     active_ctx_name: String,
+    /// The available contexts in the configuration
     ctxs: Vec<Context>,
 }
 
@@ -140,7 +163,7 @@ impl fmt::Display for TodoList {
             let mut i = 1;
             for m in self.motives.iter() {
                 writeln!(f, "{}. {}", i, m)?;
-                i = i + 1;
+                i += 1;
             }
         }
 
@@ -153,6 +176,33 @@ impl fmt::Display for TodoList {
 /// The Todo list is always a markdown file for usability.
 pub fn todo_path(todo_folder_of_todo_ctx: &str, todo_list_name: &str) -> String {
     format!("{}/{}.md", todo_folder_of_todo_ctx, todo_list_name)
+}
+
+/// Prompts user for Todo folder creation if it does not exists. Exits if user answer is negative.
+fn prompt_for_todo_folder_if_not_exists(ctx: &Context) -> Result<(), Error> {
+    if !Path::exists(Path::new(ctx.folder_location.as_str())) {
+        match Confirm::new()
+            .with_prompt(format!(
+                "Todo folder location for this context does not exists. Create {} ?",
+                ctx.folder_location
+            ))
+            .interact()
+        {
+            Ok(user_validated) => {
+                if user_validated {
+                    match std::fs::create_dir(ctx.folder_location.as_str()) {
+                        Ok(()) => Ok(()),
+                        Err(e) => Err(Error::DirectoryCreation(e)),
+                    }
+                } else {
+                    Err(Error::UserCancelledAction)
+                }
+            }
+            Err(e) => Err(Error::UserInteraction(e)),
+        }
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
