@@ -83,7 +83,15 @@ This tool was inspired from kubectl and git. This tool hopes to save some ink fr
     }
 
     if let Some(args) = matches.subcommand_matches("edit") {
-        return edit_command_process(args, &ctx);
+        if let Err(e) = edit_command_process(args, &ctx, &config) {
+            eprintln!("Error: {e}");
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Edit command could not complete.",
+            ));
+        } else {
+            return Ok(());
+        }
     }
 
     if let Some(args) = matches.subcommand_matches("list") {
@@ -92,7 +100,7 @@ This tool was inspired from kubectl and git. This tool hopes to save some ink fr
 
     if let Some(args) = matches.subcommand_matches("move") {
         if let Err(e) = move_command_process(args, &config) {
-            eprintln!("{e}");
+            eprintln!("Error: {e}");
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 "Move command could not complete.",
