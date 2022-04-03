@@ -1,17 +1,17 @@
 //! Set active Todo context among available contexts from configuration
 use super::parse_configuration_file;
-use clap::{crate_authors, App, Arg, ArgMatches};
+use clap::{crate_authors, Arg, ArgMatches, Command};
 use log::{debug, trace};
 use std::fs::File;
 use std::io::Write;
 
 /// Returns set-context subcommand from config commmand
-pub fn set_context_command() -> App<'static, 'static> {
-    App::new("set-context")
+pub fn set_context_command() -> Command<'static> {
+    Command::new("set-context")
         .about("Set active Todo context")
         .author(crate_authors!())
         .arg(
-            Arg::with_name("context")
+            Arg::new("context")
                 .takes_value(true)
                 .required(true)
                 .index(1),

@@ -1,19 +1,19 @@
 //! Create new Todo context inside configuration
 use super::{parse_configuration_file, Configuration, Context};
-use clap::{crate_authors, App, Arg, ArgMatches};
+use clap::{crate_authors, Arg, ArgMatches, Command};
 use log::{debug, trace, warn};
 use read_input::prelude::*;
 use std::fs::File;
 use std::io::Write;
 
 /// Returns create-context subcommand from config command
-pub fn create_context_command() -> App<'static, 'static> {
-    App::new("create-context")
+pub fn create_context_command() -> Command<'static> {
+    Command::new("create-context")
         .about("Create a new Todo context")
         .author(crate_authors!())
         .arg(
-            Arg::with_name("ide")
-                .short("i")
+            Arg::new("ide")
+                .short('i')
                 .long("ide")
                 .value_name("IDE")
                 .help("IDE configuration")
@@ -21,8 +21,8 @@ pub fn create_context_command() -> App<'static, 'static> {
                 .required(true),
         )
         .arg(
-            Arg::with_name("name")
-                .short("n")
+            Arg::new("name")
+                .short('n')
                 .long("name")
                 .value_name("NAME")
                 .help("Name of configuration")
@@ -30,8 +30,8 @@ pub fn create_context_command() -> App<'static, 'static> {
                 .required(true),
         )
         .arg(
-            Arg::with_name("timezone")
-                .short("t")
+            Arg::new("timezone")
+                .short('t')
                 .long("timezone")
                 .value_name("TIMEZONE")
                 .help("Timezone for configuration")
@@ -39,8 +39,8 @@ pub fn create_context_command() -> App<'static, 'static> {
                 .required(true),
         )
         .arg(
-            Arg::with_name("todo_folder")
-                .short("f")
+            Arg::new("todo_folder")
+                .short('f')
                 .long("todo-folder")
                 .value_name("TODO_FOLDER")
                 .help("Folder where todo's of configuration will be saved")

@@ -3,7 +3,7 @@ use crate::{
     parse::{parse_todo_list, parse_todo_list_section, parse_todo_list_tasks},
     Configuration, Context,
 };
-use clap::{crate_authors, App, Arg, ArgMatches};
+use clap::{crate_authors, Arg, ArgMatches, Command};
 use log::debug;
 use std::{fs::read_to_string, path::Path};
 use walkdir::WalkDir;
@@ -43,72 +43,72 @@ pub struct Parameters<'a> {
 }
 
 /// Returns Todo list command
-pub fn list_command() -> App<'static, 'static> {
-    App::new("list")
+pub fn list_command() -> Command<'static> {
+    Command::new("list")
         .about("List all todo list within Todo context with tasks remaining")
         .author(crate_authors!())
         .arg(
-            Arg::with_name("label")
-                .short("l")
+            Arg::new("label")
+                .short('l')
                 .long("label")
                 .value_name("LABEL")
                 .help("Filters by label")
-                .value_delimiter(",")
+                .value_delimiter(',')
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("short")
-                .short("s")
+            Arg::new("short")
+                .short('s')
                 .long("short")
                 .help("Displays one line summary"),
         )
         .arg(
-            Arg::with_name("all")
-                .short("a")
+            Arg::new("all")
+                .short('a')
                 .long("all")
                 .help("Shows all Todo lists"),
         )
         .arg(
-            Arg::with_name("done")
-                .short("d")
+            Arg::new("done")
+                .short('d')
                 .long("done")
                 .help("Shows only fully completed task lists"),
         )
         .arg(
-            Arg::with_name("global")
-                .short("g")
+            Arg::new("global")
+                .short('g')
                 .long("global")
                 .help("Lists Todo lists from all contexts"),
         )
         .arg(
-            Arg::with_name("open-tasks")
-                .short("o")
+            Arg::new("open-tasks")
+                .short('o')
                 .long("open")
                 .help("Shows only open tasks in the lists (default shows the entire task list)"),
         )
         .arg(
-            Arg::with_name("completed-tasks")
-                .short("c")
+            Arg::new("completed-tasks")
+                .short('c')
                 .long("completed-tasks")
                 .help(
                     "Shows only completed tasks in the lists (default shows the entire task list)",
                 ),
         )
         .arg(
-            Arg::with_name("sections")
+            Arg::new("sections")
                 .long("section")
-                .multiple(true)
+                .multiple_values(true)
                 .number_of_values(1)
                 .takes_value(true)
                 .help("Shows specified section of task list"),
         )
         .arg(
-            Arg::with_name("task-lists")
-                .short("t")
+            Arg::new("task-lists")
+                .short('t')
                 .long("task-lists")
                 .help("Show only specified task lists.")
                 .takes_value(true)
-                .multiple(true)
+                .multiple_values(true)
                 .index(1),
         )
 }

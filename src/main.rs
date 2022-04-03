@@ -1,4 +1,4 @@
-use clap::{crate_authors, crate_version, App, AppSettings, Arg};
+use clap::{crate_authors, crate_version, Arg, Command};
 use log::{debug, warn};
 //use simplelog::*;
 use todo::config::{config_command, config_command_process};
@@ -18,36 +18,34 @@ fn main() -> Result<(), std::io::Error> {
     //    ColorChoice::Auto,
     //);
     let home = std::env::var("HOME").unwrap(); // can't use '~' since it needs to be expanded
-    let with_config_path_help_text = format!(
-        "Uses configuration file at CONFIG_PATH instead of default at \"{}/.todo\"",
-        home
-    );
 
-    let app = App::new("todo Program")
+    let cmd = Command::new("todo Program")
         .version(crate_version!())
         .author(crate_authors!())
-        .setting(AppSettings::GlobalVersion)
+        .subcommand_required(true)
         .long_about("Tool to manage todo lists from multiple contexts
 
 This tool was inspired from kubectl and git. This tool hopes to save some ink from your whiteboard.")
         .about("Tool to manage todo lists from multiple contexts");
-    let app = app
-        .setting(AppSettings::SubcommandRequired)
+    let app = cmd
+        .subcommand_required(true)
         // this command is mostly for testing purposes
         .arg(
-            Arg::with_name("with-config")
-                .short("r")
+            Arg::new("with-config")
+                .short('r')
                 .long("with-config")
                 .value_name("CONFIG_RAW")
                 .help("Use <CONFIG_RAW> instead of configuration file")
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("with-config-path")
-                .short("p")
+            Arg::new("with-config-path")
+                .short('p')
                 .long("with-config-path")
                 .value_name("CONFIG_PATH")
-                .help(with_config_path_help_text.as_str())
+                .help(
+                    "Uses configuration file at CONFIG_PATH instead of default at \"$HOME/.todo\"",
+                )
                 .takes_value(true),
         )
         .subcommand(create_command())

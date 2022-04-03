@@ -1,16 +1,16 @@
 //! Display all available Todo contexts from configuration
 use super::parse_configuration_file;
-use clap::{crate_authors, App, Arg, ArgMatches};
+use clap::{crate_authors, Arg, ArgMatches, Command};
 use log::{debug, trace};
 
 /// Returns get-context subcommand from config command
-pub fn get_contexts_command() -> App<'static, 'static> {
-    App::new("get-contexts")
+pub fn get_contexts_command() -> Command<'static> {
+    Command::new("get-contexts")
         .about("Get all available Todo contexts")
         .author(crate_authors!())
         .arg(
-            Arg::with_name("full")
-                .short("f")
+            Arg::new("full")
+                .short('f')
                 .long("full")
                 .help("Display all information about Todo context"),
         )

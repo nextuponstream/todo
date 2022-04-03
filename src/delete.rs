@@ -2,18 +2,18 @@
 use super::todo_path;
 use super::Context;
 use clap::crate_authors;
-use clap::{App, Arg, ArgMatches};
+use clap::{Arg, ArgMatches, Command};
 use log::trace;
 use std::fs::remove_file;
 
 /// Returns Delete Todo command
-pub fn delete_command() -> App<'static, 'static> {
-    App::new("delete")
+pub fn delete_command() -> Command<'static> {
+    Command::new("delete")
         .about("Delete todo list by name within Todo context")
         .author(crate_authors!())
         .arg(
-            Arg::with_name("title")
-                .short("t")
+            Arg::new("title")
+                .short('t')
                 .long("title")
                 .value_name("TITLE")
                 .index(1)

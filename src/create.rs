@@ -1,57 +1,55 @@
 //! Create Todo list in active Todo context inside configuration
 use super::{prompt_for_todo_folder_if_not_exists, todo_path, Context, TodoList};
-use clap::{crate_authors, App, Arg, ArgMatches};
+use clap::{crate_authors, Arg, ArgMatches, Command};
 use dialoguer::Confirm;
 use log::trace;
 use std::fs::read_to_string;
 
 /// Returns Todo create command
-pub fn create_command() -> App<'static, 'static> {
-    App::new("create")
+pub fn create_command() -> Command<'static> {
+    Command::new("create")
         .about("Create a new todo list within Todo context")
         .author(crate_authors!())
         .arg(
-            Arg::with_name("label")
-                .short("l")
+            Arg::new("label")
+                .short('l')
                 .long("label")
                 .value_name("LABEL")
                 .help("Filter by label")
-                .value_delimiter(",")
+                .value_delimiter(',')
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("title")
-                .short("t")
-                .long("title")
+            Arg::new("title")
                 .value_name("TITLE")
                 .help("Sets title of todo")
                 .takes_value(true)
-                .empty_values(false)
+                .forbid_empty_values(true)
                 .required(true)
                 .index(1),
         )
         .arg(
-            Arg::with_name("content")
-                .short("c")
+            Arg::new("content")
+                .short('c')
                 .long("content")
                 .value_name("CONTENT")
                 .help("Sets content of todo")
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("item")
-                .short("i")
+            Arg::new("item")
+                .short('i')
                 .long("item")
-                .multiple(true)
+                .multiple_values(true)
                 .value_name("ITEM")
                 .help("An item of your todo list")
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("motives")
-                .short("m")
+            Arg::new("motives")
+                .short('m')
                 .long("motives")
-                .multiple(true)
+                .multiple_values(true)
                 .value_name("MOTIVE")
                 .help("list of motives that appears in reverse order of the todo")
                 .takes_value(true),

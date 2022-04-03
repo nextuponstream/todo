@@ -4,7 +4,7 @@ use core::fmt;
 use crate::{prompt_for_todo_folder_if_not_exists, todo_path};
 
 use super::Configuration;
-use clap::{crate_authors, App, Arg, ArgMatches};
+use clap::{crate_authors, Arg, ArgMatches, Command};
 
 /// Errors for move command
 #[derive(Debug)]
@@ -55,13 +55,13 @@ impl fmt::Display for Error {
 }
 
 /// Returns the Edit Todo command
-pub fn move_command() -> App<'static, 'static> {
-    App::new("move")
+pub fn move_command() -> Command<'static> {
+    Command::new("move")
         .about("Move todo list into other Todo context")
         .author(crate_authors!())
         .arg(
-            Arg::with_name("title")
-                .short("t")
+            Arg::new("title")
+                .short('t')
                 .long("title")
                 .value_name("TITLE")
                 .index(1)
@@ -70,8 +70,8 @@ pub fn move_command() -> App<'static, 'static> {
                 .required(true),
         )
         .arg(
-            Arg::with_name("context name")
-                .short("c")
+            Arg::new("context name")
+                .short('c')
                 .long("ctx")
                 .value_name("CONTEXT_NAME")
                 .index(2)

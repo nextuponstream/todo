@@ -1,9 +1,8 @@
 //! Edit Todo list in active Todo context
 use super::{todo_path, Configuration, Context};
-use clap::{crate_authors, App, Arg, ArgMatches};
+use clap::{crate_authors, Arg, ArgMatches, Command};
 use core::fmt;
 use log::trace;
-use std::process::Command;
 
 pub enum Error {
     UnknownContext(String),
@@ -18,13 +17,13 @@ impl fmt::Display for Error {
 }
 
 /// Returns the Edit Todo command
-pub fn edit_command() -> App<'static, 'static> {
-    App::new("edit")
+pub fn edit_command() -> Command<'static> {
+    Command::new("edit")
         .about("Edit todo list within Todo context")
         .author(crate_authors!())
         .arg(
-            Arg::with_name("title")
-                .short("t")
+            Arg::new("title")
+                .short('t')
                 .long("title")
                 .value_name("TITLE")
                 .index(1)
@@ -33,8 +32,8 @@ pub fn edit_command() -> App<'static, 'static> {
                 .required(true),
         )
         .arg(
-            Arg::with_name("context name")
-                .short("c")
+            Arg::new("context name")
+                .short('c')
                 .long("ctx")
                 .value_name("CONTEXT")
                 .index(2)
@@ -63,7 +62,7 @@ pub fn edit_command_process(
         (ctx.ide.as_str(), ctx.folder_location.as_str())
     };
 
-    Command::new(ctx_ide)
+    std::process::Command::new(ctx_ide)
         .arg(todo_path(ctx_folder, title))
         .status()
         .expect("IDE error");

@@ -1,11 +1,11 @@
 //! Display active Todo context from configuration
 use super::parse::parse_active_context;
-use clap::{crate_authors, App};
+use clap::{crate_authors, Command};
 use log::trace;
 
 /// Returns active-context subcommand from configuration command
-pub fn active_context_command() -> App<'static, 'static> {
-    App::new("active-context")
+pub fn active_context_command() -> Command<'static> {
+    Command::new("active-context")
         .about("Shows active Todo context")
         .author(crate_authors!())
 }

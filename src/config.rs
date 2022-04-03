@@ -3,15 +3,15 @@ use crate::config_active_context::{active_context_command, active_context_comman
 use crate::config_create_context::{config_create_context_process, create_context_command};
 use crate::config_get_contexts::{get_contexts_command, get_contexts_command_process};
 use crate::config_set_context::{set_context_command, set_context_command_process};
-use clap::{crate_authors, App, AppSettings, ArgMatches};
+use clap::{crate_authors, ArgMatches, Command};
 use log::warn;
 
 /// Returns configuration command which is comprised of multiple subcommands
-pub fn config_command() -> App<'static, 'static> {
-    App::new("config")
+pub fn config_command() -> Command<'static> {
+    Command::new("config")
         .about("Manage your todo configuration")
         .author(crate_authors!())
-        .setting(AppSettings::SubcommandRequired)
+        .subcommand_required(true)
         .subcommand(create_context_command())
         .subcommand(active_context_command())
         .subcommand(get_contexts_command())
